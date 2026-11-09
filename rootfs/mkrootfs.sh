@@ -24,6 +24,15 @@
 #   UC_PXX_SPLASH_SIZES  optional: extra splash sizes (WxH, separated by
 #               spaces). Empty (the default): only the images of the package
 #   TSX_BUILD_ID
+#   MIRROR      the Alpine mirror of the build (default dl-cdn.alpinelinux.org).
+#               The panel's /etc/apk/repositories always names PANEL_MIRROR
+#               (default the same public mirror), never a build snapshot
+#   SOURCE_DATE_EPOCH  optional, seconds: a reproducible build (docs/mainline-payload.md).
+#               Every file time of the tree is at most this time, the shadow
+#               day is this day, the tarball has a fixed order, and mke2fs uses
+#               this time. It needs TSX_BUILD_ID and ROOTFS_UUID
+#   ROOTFS_UUID optional: the UUID and the directory hash seed of rootfs.ext4
+#               (default: random, as mke2fs makes them)
 #   TSX_DEV_ROOT_HASH  optional crypt(3) hash that becomes the root password
 #               of the image, for our own test builds only. Without it the
 #               image has no root password (docs/rootfs.md "Root login").
@@ -46,6 +55,18 @@ TOP=$(cd "$HERE/.." && pwd)
 R=/build/rootfs; mkdir -p /build
 CACHE=/build/pip; mkdir -p $CACHE
 MIRROR=${MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
+PANEL_MIRROR=${PANEL_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
+SDE=${SOURCE_DATE_EPOCH:-}
+if [ -n "$SDE" ]; then
+	case $SDE in *[!0-9]*) echo "mkrootfs.sh: SOURCE_DATE_EPOCH=$SDE is not a number of seconds"; exit 1;; esac
+	[ -n "${TSX_BUILD_ID:-}" ] || { echo "mkrootfs.sh: SOURCE_DATE_EPOCH needs TSX_BUILD_ID (the build id must not be the build time)"; exit 1; }
+	[ -n "${ROOTFS_UUID:-}" ] || { echo "mkrootfs.sh: SOURCE_DATE_EPOCH needs ROOTFS_UUID"; exit 1; }
+	export SOURCE_DATE_EPOCH
+fi
+case ${ROOTFS_UUID:-} in
+''|[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+*) echo "mkrootfs.sh: ROOTFS_UUID=$ROOTFS_UUID is not a lower-case UUID"; exit 1;;
+esac
 ARCH=aarch64
 log() { echo "== $*"; }
 [ "$(apk --print-arch)" = $ARCH ] || { echo "mkrootfs.sh: this container is $(apk --print-arch), not $ARCH"; exit 1; }
@@ -92,7 +113,7 @@ done
 if [ "$DEV" != 1 ]; then
 	sh "$HERE/check-apk-tree.sh" "$TSX_APK_LOCAL" "$PROFILE" || { echo "ERROR: the tree $TSX_APK_LOCAL lacks packages that the $PROFILE image needs (docs/rootfs.md \"Where the packages come from\")"; exit 1; }
 fi
-apk add -q --no-cache e2fsprogs tar gzip zstd >/dev/null
+apk add -q --no-cache e2fsprogs tar gzip zstd coreutils findutils >/dev/null
 
 log "install packages ($ALPINE, $ARCH)"
 rm -rf $R; mkdir -p $R/etc/apk/keys
@@ -132,7 +153,7 @@ cp -a /etc/apk/keys $R/etc/apk/
 	echo "# tsx-aports (tsx-config apply; panel.conf APK_URL)"
 	echo "$TSX_APK_URL/$ALPINE/common"
 	echo "$TSX_APK_URL/$ALPINE/uc-pxx"
-	cat /etc/apk/repositories
+	printf '%s/%s/main\n%s/%s/community\n' "$PANEL_MIRROR" "$ALPINE" "$PANEL_MIRROR" "$ALPINE"
 } > $R/etc/apk/repositories
 
 if [ "$DEV" = 1 ]; then
@@ -422,8 +443,49 @@ rm -rf $R/var/cache/apk/*
 # image ships with none.
 rm -f $R/var/log/tsx-idled.log
 
+if [ -n "$SDE" ]; then
+	log "reproducible tree (SOURCE_DATE_EPOCH $SDE)"
+	# busybox adduser and passwd write today as the day of the last password
+	# change. Use the day of SOURCE_DATE_EPOCH. An empty day and the day 0
+	# (change at the next login) stay.
+	for f in $R/etc/shadow $R/etc/shadow-; do
+		[ -f "$f" ] || continue
+		awk -F: -v OFS=: -v d=$((SDE / 86400)) 'NF >= 3 && $3 ~ /^[0-9]+$/ && $3 > 0 { $3 = d } { print }' "$f" > /build/shadow.new
+		cat /build/shadow.new > "$f"; rm -f /build/shadow.new
+	done
+	# apk writes the time of each run into /var/log/apk.log ("Running `apk
+	# add ...` at TIME"). Use SOURCE_DATE_EPOCH.
+	L=$R/var/log/apk.log
+	if [ -f $L ]; then
+		STAMP=$(date -u -d "@$SDE" '+%Y-%m-%d %H:%M:%S')
+		sed -i "s/^\(Running \`apk .*\` at \)[0-9-]* [0-9:]*\$/\1$STAMP/" $L
+		! grep '^Running `apk ' $L | grep -v -F "\` at $STAMP" | grep -q . ||
+			{ echo "ERROR: $L has a run with another time"; grep '^Running' $L; exit 1; }
+	fi
+	# install-lva.sh builds pymicro-features from its sdist in a pip folder
+	# with a random name. The debug info and the build id of that library name
+	# the folder. Remove them (the panel never needs them).
+	find $R/opt/lva -type f -name '*.so' 2>/dev/null | sort | while read -r f; do
+		grep -q -F 'pip-req-build-' "$f" || continue
+		strip --strip-debug --remove-section=.note.gnu.build-id "$f"
+		grep -q -F 'pip-req-build-' "$f" && { echo "ERROR: $f still names the pip build folder"; exit 1; }
+		echo "stripped the debug info and the build id of ${f#$R}"
+	done
+	# No file time after SOURCE_DATE_EPOCH (the files that the build made or
+	# changed; the times of the packages are older and stay).
+	touch -d "@$SDE" /build/sde.ref
+	find $R -newer /build/sde.ref -exec touch -h -d "@$SDE" {} +
+	# The fontconfig caches of the package triggers hold the times of the font
+	# folders at the install. Make them again for the times of the image.
+	if [ -x $R/usr/bin/fc-cache ]; then
+		rm -f $R/var/cache/fontconfig/*
+		chroot $R /usr/bin/fc-cache -s -f >/dev/null || { echo "ERROR: fc-cache failed"; exit 1; }
+		find $R -newer /build/sde.ref -exec touch -h -d "@$SDE" {} +
+	fi
+	rm -f /build/sde.ref
+fi
 log "tarball"
-tar -C $R --numeric-owner -cpf - . | gzip -6 > "$OUT/rootfs.tar.gz"
+tar -C $R --sort=name --numeric-owner -cpf - . | gzip -6 -n > "$OUT/rootfs.tar.gz"
 # The ext4 image is compact (the content plus headroom). The initramfs grows
 # the file system to fill system_a (1792 MiB) on the first boot. So the image
 # must leave room for that to be worth anything.
@@ -432,7 +494,12 @@ IMG_MB=${IMG_MB:-$(( (used * 105 / 100) + ${IMG_HEADROOM_MB:-256} ))}
 [ "$IMG_MB" -le 1700 ] || { echo "rootfs.ext4 would be $IMG_MB MiB: too large for system_a (1792 MiB)"; exit 1; }
 log "ext4 image (${IMG_MB} MiB, label tsxroot; content ${used} MiB)"
 rm -f "$OUT/rootfs.ext4"
-mke2fs -q -t ext4 -L tsxroot -m 1 -d $R "$OUT/rootfs.ext4" "${IMG_MB}M"
+# ROOTFS_UUID fixes the UUID, the metadata checksum seed and the directory hash
+# seed. mke2fs takes its times from SOURCE_DATE_EPOCH when it is set.
+UUIDARGS=
+[ -z "${ROOTFS_UUID:-}" ] || UUIDARGS="-U $ROOTFS_UUID -E hash_seed=$ROOTFS_UUID"
+# shellcheck disable=SC2086 # empty or four words
+mke2fs -q -t ext4 -L tsxroot -m 1 $UUIDARGS -d $R "$OUT/rootfs.ext4" "${IMG_MB}M"
 e2fsck -fn "$OUT/rootfs.ext4" >/dev/null && echo "e2fsck clean"
 (cd "$OUT" && sha256sum rootfs.tar.gz rootfs.ext4 > rootfs.sha256)
 chown "$UIDGID" "$OUT"/rootfs.*

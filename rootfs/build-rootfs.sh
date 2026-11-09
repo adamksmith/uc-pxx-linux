@@ -92,6 +92,24 @@
 # boot (docs/kernel.md "Everything is built in"). So most builds stage
 # nothing.
 #
+# Reproducible builds ("rootfs" and "all"; tools/mainline-payload/build.sh sets
+# them, docs/mainline-payload.md):
+#   SOURCE_DATE_EPOCH  seconds. mkrootfs.sh then makes the same bytes from the
+#               same inputs: every file time is at most this time, the shadow
+#               day, the tarball order and the ext4 times are fixed. It needs
+#               TSX_BUILD_ID and ROOTFS_UUID
+#   ROOTFS_UUID  the UUID (and the directory hash seed) of rootfs.ext4
+#   UC_PXX_APK_MIRROR  a local folder with the layout of an Alpine mirror
+#               (<ALPINE>/main/aarch64/APKINDEX.tar.gz, ...). It becomes the
+#               read-only mount /mirror and the build mirror of the container.
+#               The panel keeps the public mirror in /etc/apk/repositories
+#   UC_PXX_MIRROR_URL  the build mirror as a URL (the priming build of
+#               tools/mainline-payload/build.sh). Not with UC_PXX_APK_MIRROR
+#   UC_PXX_DOCKER_NET  the docker network of the build container (none: no
+#               network; the default is the docker default)
+#   UC_PXX_PIP_CACHE  the folder of the Python files of install-lva.sh
+#               (default ~/.cache/uc-pxx-pip). The build writes into it
+#
 # Downloads: Alpine packages from dl-cdn.alpinelinux.org (branch $ALPINE), the
 # alpine:3.24 docker image, and the pinned, checksummed Python wheels that
 # install-lva.sh of the package tsx-ha fetches. The versions are recorded in
@@ -291,8 +309,21 @@ rootfs() {
 		in_file UC_PXX_REBOOT "$UC_PXX_REBOOT"
 		in_file RTL8363_INIT "$RTL8363_INIT"
 	fi
-	mkdir -p "$HOME/.cache/uc-pxx-pip"
-	docker run "${dargs[@]}" -v "$HOME/.cache/uc-pxx-pip:/build/pip" \
+	# the build mirror: a local snapshot, a URL, or the default of mkrootfs.sh
+	if [ -n "${UC_PXX_APK_MIRROR:-}" ]; then
+		[ -z "${UC_PXX_MIRROR_URL:-}" ] || { echo "UC_PXX_APK_MIRROR and UC_PXX_MIRROR_URL exclude each other"; exit 1; }
+		[ -r "$UC_PXX_APK_MIRROR/$ALPINE/main/aarch64/APKINDEX.tar.gz" ] || { echo "UC_PXX_APK_MIRROR=$UC_PXX_APK_MIRROR has no $ALPINE/main/aarch64/APKINDEX.tar.gz"; exit 1; }
+		dargs+=(-v "$(cd "$UC_PXX_APK_MIRROR" && pwd):/mirror:ro" -e MIRROR=/mirror)
+	elif [ -n "${UC_PXX_MIRROR_URL:-}" ]; then
+		dargs+=(-e MIRROR="$UC_PXX_MIRROR_URL")
+	fi
+	[ -z "${UC_PXX_DOCKER_NET:-}" ] || dargs+=(--network "$UC_PXX_DOCKER_NET")
+	if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+		dargs+=(-e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" -e ROOTFS_UUID="${ROOTFS_UUID:-}")
+	fi
+	local pip=${UC_PXX_PIP_CACHE:-$HOME/.cache/uc-pxx-pip}
+	mkdir -p "$pip"
+	docker run "${dargs[@]}" -v "$(cd "$pip" && pwd):/build/pip" \
 		-e KVER="$KVER" -e IMG_MB="${IMG_MB:-}" -e IMG_HEADROOM_MB="${IMG_HEADROOM_MB:-256}" \
 		-e TSX_APK_URL="${TSX_APK_URL:-https://tsx-aports.unexceptional.net}" -e TSX_BUILD_ID="${TSX_BUILD_ID:-}" \
 		-e PROFILE="${PROFILE:-ha}" -e TSX_DEV_ROOT_HASH="${TSX_DEV_ROOT_HASH:-}" \

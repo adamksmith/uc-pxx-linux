@@ -49,6 +49,19 @@ The initramfs grows the file system to fill the partition at the first boot.
 The initramfs is built into the kernel Image. `rootfs/build-rootfs.sh
 initramfs` makes it ([boot.md](boot.md) "The boot initramfs").
 
+### A reproducible build
+
+With `SOURCE_DATE_EPOCH`, `TSX_BUILD_ID` and `ROOTFS_UUID` set, the same
+inputs give the same `rootfs.tar.gz` and `rootfs.ext4`: no file time is after
+`SOURCE_DATE_EPOCH`, the shadow day is its day, the tarball is in name order
+(`gzip -n`), and the UUID and the hash seed of the file system are
+`ROOTFS_UUID`. `UC_PXX_APK_MIRROR` names a local snapshot of the Alpine
+mirror for the build container (the panel's `/etc/apk/repositories` keeps the
+public mirror), `UC_PXX_DOCKER_NET=none` runs the container without network,
+and `UC_PXX_PIP_CACHE` names the folder of the Python files of
+`install-lva.sh`. `tools/mainline-payload/build.sh` sets all of them
+([mainline-payload.md](mainline-payload.md)).
+
 ## Test build without the uc-pxx packages
 
 A test build can use the files of this repository instead of the packages of
