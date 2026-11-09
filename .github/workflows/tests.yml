@@ -85,6 +85,8 @@ jobs:
         run: sh kernel/tests/test-build-kernel.sh
       - name: rootfs/tests/test-kernel-pins.sh - the rootfs kernel package matches kernel/KERNEL_REV.lts
         run: rootfs/tests/test-kernel-pins.sh
+      - name: kernel/tests/test-mainline-payload.sh - the mainline payload (contract v1) checks, the kernel pin refusal (the kernel/mkimage.sh parts are SKIPPED without the cross compiler)
+        run: sh kernel/tests/test-mainline-payload.sh
 
   # The ESPHome plugin runs against tsx_panel of tsx-linux-common (the tag in
   # COMMON_REF). TSX_COMMON names the checkout.
