@@ -7,20 +7,24 @@
 # kernel"). The kernel command line itself does not have the word: it comes
 # from the device tree of the boot image.
 #
-# Exit 0: the slot is printed. Exit 1: nothing is printed, because
-#   - the property is missing (a RAM boot by `fastboot boot`: U-Boot passes
-#     no device tree), or
-#   - the property has no androidboot.slot_suffix word, more than one, or a
-#     value other than _a and _b.
+# Exit 0: the slot is printed.
+# Exit 1: nothing is printed: the property is missing (a RAM boot by
+#   `fastboot boot`: U-Boot passes no device tree).
+# Exit 2: nothing is printed: the property is there, but it has no
+#   androidboot.slot_suffix word, more than one, or a value other than _a and
+#   _b. The slot is not known: a caller that changes a slot refuses, and the
+#   initramfs starts the rescue system.
 # The program reads only this property. It writes nothing. The initramfs, the
-# boot-marking hook and the slot-A updaters use it (MAINLINE-STEP2-DESIGN §10).
+# boot-marking hook, the slot-A updaters and the rescue tools use it
+# (MAINLINE-STEP2-DESIGN §10).
 set -u
 P=/proc/device-tree/chosen/u-boot,bootargs
-[ -r "$P" ] || exit 1
+[ -e "$P" ] || exit 1
+[ -r "$P" ] || exit 2
 # the property is a NUL-terminated string; one word on each line
 s=$(tr '\000\t' '  ' < "$P" | tr -s ' ' '\n' | sed -n 's/^androidboot\.slot_suffix=//p')
 case $s in
 	_a) echo a ;;
 	_b) echo b ;;
-	*) exit 1 ;;
+	*) exit 2 ;;
 esac

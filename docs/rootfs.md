@@ -166,12 +166,24 @@ with `TSX_DEV_ROOT_HASH`. Never publish such an image.
 
 | Mount | Source | Note |
 |---|---|---|
-| `/` | `system_a`, ext4, label `tsxroot` | Grown to fill the partition by the initramfs |
-| `/data` | ext4, label `tsxdata` | Phase 1: the LVM volume `tsx/data` over `vendor_a` and `oem_a`. Phase 2: `userdata`. `nofail` |
+| `/` | `system_a` or `system_b` (the booted slot, by GPT name), ext4, label `tsxroot` | The initramfs checks it, grows it to fill the partition and mounts it (`rw,noatime,commit=60`) |
+| `/data` | ext4, label `tsxdata` | Phase 2: `userdata` (by GPT name). Phase 1: the LVM volume `tsx/data` over `vendor_a` and `oem_a`. Mounted by `uc-pxx-lvm` |
 | `/tmp` | tmpfs | |
 
-The service `uc-pxx-lvm` activates the volume group `tsx` before `/data` is
-mounted. [boot.md](boot.md) tells the phases.
+The fstab has only the `/tmp` line. A line by `LABEL=` or `UUID=` is not
+unique with mainline in both slots: `system_a` and `system_b` hold the same
+image, and a unit can have two file systems with the label `tsxdata`. So the
+initramfs mounts the root by its GPT name, and the service `uc-pxx-lvm` mounts
+`/data` before `localmount`, by device and only after an exact check (ext4,
+label `tsxdata`): `userdata` first, else the LVM volume. It never mounts a
+`userdata` with another label (Android's data, or `tsxdata-new` of a step 2
+that has not finished). [boot.md](boot.md) tells the phases.
+
+The fstab is a file of the image (`profiles/image.list`), the service is a
+file of the package `uc-pxx-board`, and the initramfs is in the kernel package.
+A release that ships this fstab ships the service and the initramfs of the
+same commit: an older `uc-pxx-lvm` only activates the volume group and does not
+mount it.
 
 ## Board values
 
@@ -254,7 +266,7 @@ All services of this family start with `uc-pxx-`.
 
 | Service | Runlevel | State |
 |---|---|---|
-| `uc-pxx-lvm` | boot | Done. Activates the data volume |
+| `uc-pxx-lvm` | boot | Done. Mounts `/data`: `userdata` (ext4 `tsxdata`) or the LVM data volume |
 | `uc-pxx-clock` | boot | Keeps the boot clock at or after the clock floor, after `hwclock`. See "Clock" |
 | `uc-pxx-watchdog` | boot | Done. Feeds `/dev/watchdog0` with the busybox watchdog |
 | `uc-pxx-firmware` | boot | Copies the Wi-Fi and Bluetooth files from the vendor partition and starts their drivers again. See "Firmware" |

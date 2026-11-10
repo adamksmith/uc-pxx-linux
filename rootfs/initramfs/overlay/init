@@ -11,12 +11,15 @@
 # The root file system: the partition named system_a or system_b (GPT name)
 # with an ext4 file system labeled tsxroot. The slot is the word
 # androidboot.slot_suffix of the U-Boot command line (uc-pxx-slot, from
-# /proc/device-tree/chosen/u-boot,bootargs). A boot without it (a RAM boot by
-# `fastboot boot`) uses system_a, as before. Only then, if no partition has
-# that name, the one partition of the eMMC with the label tsxroot, and only
-# when exactly one has it (after step 2 both system_a and system_b have it).
-# A slot boot never falls back to a label. The script checks,
-# grows or mounts only a file system with the label tsxroot.
+# /proc/device-tree/chosen/u-boot,bootargs). A boot without that property (a
+# RAM boot by `fastboot boot`) uses system_a, as before. A property without
+# one clear slot word starts the rescue system. The root is found only by its
+# GPT name, never by the label or the UUID: after step 2 both system_a and
+# system_b hold the same image, with the same label and the same UUID
+# (MAINLINE-STEP2-DESIGN review F7). The label is a check only: the script
+# checks, grows or mounts only a file system with the label tsxroot. It
+# mounts it with the options rw,noatime,commit=60 (the fstab of the root file
+# system has no root line: it would name the root by its label).
 #
 # The script never writes the A/B metadata, a boot partition or the partition
 # table. It writes only to the root file system (e2fsck, resize2fs).
@@ -181,23 +184,24 @@ part_by_name() {
 label_of() { blkid "$1" 2>/dev/null | sed -n 's/.* LABEL="\([^"]*\)".*/\1/p'; }
 type_of() { blkid "$1" 2>/dev/null | sed -n 's/.* TYPE="\([^"]*\)".*/\1/p'; }
 
-# The slot that U-Boot started: a or b. Nothing for a RAM boot.
-slot=$(/usr/sbin/uc-pxx-slot 2>/dev/null) || slot=
+# The slot that U-Boot started: a or b. Nothing for a RAM boot (uc-pxx-slot
+# exit 1: no u-boot,bootargs). Any other exit: the slot is not known, and a
+# guess could start the root of the other slot: the rescue system.
+slot=$(/usr/sbin/uc-pxx-slot 2>/dev/null); src=$?
+case $src in
+0) ;;
+1) slot= ;;
+*) rescue "the U-Boot command line names no single slot (uc-pxx-slot exit $src): the root partition is not known";;
+esac
 rootname=system_${slot:-a}
-msg "booted slot ${slot:-none (no androidboot.slot_suffix: a RAM boot?)}, root partition $rootname"
+msg "booted slot ${slot:-none (no u-boot,bootargs: a RAM boot)}, root partition $rootname"
 
-# find_root: the device of the root file system, or nothing
+# find_root: the device of the partition with the GPT name $rootname, or
+# nothing. Never a label or a UUID (two slots hold the same ones).
 find_root() {
-	if d=$(part_by_name "$rootname"); then
-		[ -b "$d" ] && { echo "$d"; return 0; }
-	fi
-	# The label fallback only without a slot (a RAM boot): with a slot, a
-	# missed name must never pick the other slot's root (it waits instead).
-	[ -z "$slot" ] || return 1
-	[ "$(blkid 2>/dev/null | grep -c ' LABEL="tsxroot"')" = 1 ] || return 1
-	d=$(findfs LABEL=tsxroot 2>/dev/null) || return 1
-	case $d in /dev/mmcblk*p*) echo "$d"; return 0;; esac
-	return 1
+	d=$(part_by_name "$rootname") || return 1
+	[ -b "$d" ] || return 1
+	echo "$d"
 }
 
 end=$(( $(up) + wait ))
@@ -208,7 +212,7 @@ while :; do
 	[ "$(up)" -ge "$end" ] && break
 	sleep 0.25
 done
-[ -n "$dev" ] || rescue "no root partition: no $rootname and no single LABEL=tsxroot on the eMMC within ${wait}s"
+[ -n "$dev" ] || rescue "no root partition: no partition named $rootname on the eMMC within ${wait}s"
 lab=$(label_of "$dev") typ=$(type_of "$dev")
 msg "root partition $dev (label '${lab:-none}', type '${typ:-none}')"
 [ "$lab" = tsxroot ] && [ "$typ" = ext4 ] ||
@@ -242,7 +246,7 @@ if [ -n "$psz" ] && [ $# = 2 ]; then
 	fi
 fi
 
-mount -t ext4 -o rw,noatime "$dev" /newroot || rescue "cannot mount $dev"
+mount -t ext4 -o rw,noatime,commit=60 "$dev" /newroot || rescue "cannot mount $dev"
 if [ -e /newroot/etc/uc-pxx-force-rescue ]; then
 	rm -f /newroot/etc/uc-pxx-force-rescue
 	sync

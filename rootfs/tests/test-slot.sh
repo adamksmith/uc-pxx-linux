@@ -30,27 +30,32 @@ prop "$UB androidboot.slot_suffix=_b $UE"; eq "$(run)" "0:b" "slot _b prints b"
 prop "androidboot.slot_suffix=_b"; eq "$(run)" "0:b" "the word alone"
 printf '%s\tandroidboot.slot_suffix=_a\t%s\000' "$UB" "$UE" > "$T/prop"; eq "$(run)" "0:a" "words split by tabs"
 rm -f "$T/prop"; eq "$(run)" "1:" "no property (a RAM boot): exit 1, nothing printed"
-prop "$UB $UE"; eq "$(run)" "1:" "no slot word: exit 1"
-prop "$UB androidboot.slot_suffix=_a androidboot.slot_suffix=_b $UE"; eq "$(run)" "1:" "two slot words (a and b): exit 1"
-prop "$UB androidboot.slot_suffix=_a androidboot.slot_suffix=_a $UE"; eq "$(run)" "1:" "two slot words (a and a): exit 1"
-prop "$UB androidboot.slot_suffix=_c $UE"; eq "$(run)" "1:" "slot _c: exit 1"
-prop "$UB androidboot.slot_suffix=a $UE"; eq "$(run)" "1:" "slot without the underscore: exit 1"
-prop "$UB androidboot.slot_suffix= $UE"; eq "$(run)" "1:" "empty slot: exit 1"
-prop "$UB androidboot.slot_suffix=_ab $UE"; eq "$(run)" "1:" "slot _ab: exit 1"
-prop "$UB xandroidboot.slot_suffix=_b $UE"; eq "$(run)" "1:" "a longer word that ends like the slot word: exit 1"
-prop "$UB androidboot.slot_suffix=_b"; printf 'androidboot.slot_suffix=_a\000' >> "$T/prop"; eq "$(run)" "1:" "a second string after the NUL: two words, exit 1"
-: > "$T/prop"; eq "$(run)" "1:" "an empty property: exit 1"
+prop "$UB $UE"; eq "$(run)" "2:" "no slot word: exit 2"
+prop "$UB androidboot.slot_suffix=_a androidboot.slot_suffix=_b $UE"; eq "$(run)" "2:" "two slot words (a and b): exit 2"
+prop "$UB androidboot.slot_suffix=_a androidboot.slot_suffix=_a $UE"; eq "$(run)" "2:" "two slot words (a and a): exit 2"
+prop "$UB androidboot.slot_suffix=_c $UE"; eq "$(run)" "2:" "slot _c: exit 2"
+prop "$UB androidboot.slot_suffix=a $UE"; eq "$(run)" "2:" "slot without the underscore: exit 2"
+prop "$UB androidboot.slot_suffix= $UE"; eq "$(run)" "2:" "empty slot: exit 2"
+prop "$UB androidboot.slot_suffix=_ab $UE"; eq "$(run)" "2:" "slot _ab: exit 2"
+prop "$UB xandroidboot.slot_suffix=_b $UE"; eq "$(run)" "2:" "a longer word that ends like the slot word: exit 2"
+prop "$UB androidboot.slot_suffix=_b"; printf 'androidboot.slot_suffix=_a\000' >> "$T/prop"; eq "$(run)" "2:" "a second string after the NUL: two words, exit 2"
+: > "$T/prop"; eq "$(run)" "2:" "an empty property: exit 2"
 
 echo "== the initramfs =="
 sh -n "$INIT" && ok "init passes sh -n" || bad "init: sh -n"
-grep -q '^slot=$(/usr/sbin/uc-pxx-slot 2>/dev/null) || slot=$' "$INIT" && ok "init asks uc-pxx-slot for the booted slot" || bad "init does not run uc-pxx-slot"
+grep -q '^slot=$(/usr/sbin/uc-pxx-slot 2>/dev/null); src=$?$' "$INIT" && ok "init asks uc-pxx-slot for the booted slot" || bad "init does not run uc-pxx-slot"
+sed -n '/^slot=$(\/usr\/sbin\/uc-pxx-slot/,/^esac$/p' "$INIT" > "$T/slotcase"
+grep -q '^1) slot= ;;$' "$T/slotcase" && ok "uc-pxx-slot exit 1 (no u-boot,bootargs: a RAM boot): no slot" || bad "exit 1 is not the RAM boot"
+grep -q '^\*) rescue ' "$T/slotcase" && ok "any other exit of uc-pxx-slot (a bad slot word): the rescue" || bad "a bad slot word does not start the rescue"
 grep -q '^rootname=system_${slot:-a}$' "$INIT" && ok "the root partition is system_<slot>, system_a without a slot (a RAM boot)" || bad "the root partition rule changed"
 grep -q 'part_by_name "$rootname"' "$INIT" && ok "find_root looks for the GPT name of the booted slot" || bad "find_root does not use the booted slot"
 grep -q 'part_by_name system_a' "$INIT" && bad "init still looks for system_a by name" || ok "no fixed system_a lookup is left"
-grep -q 'grep -c '"'"' LABEL="tsxroot"'"'"')" = 1 \] || return 1' "$INIT" && ok "the label fallback needs exactly one tsxroot" || bad "the label fallback does not count the tsxroot file systems"
-grep -q '^	\[ -z "\$slot" \] || return 1$' "$INIT" && ok "the label fallback only without a slot" || bad "a slot boot may fall back to a label"
-# find_root of init, run with stand-ins: part_by_name finds the slot's partition; blkid/findfs for the fallback
-sed -n '/^# find_root: the device of the root file system, or nothing$/,/^}$/p' "$INIT" > "$T/find_root.sh"
+grep -v '^[[:space:]]*#' "$INIT" | grep -Eq 'findfs|LABEL=tsxroot|UUID=' && bad "init still finds a root by a label or a UUID" || ok "init never finds a root by a label or a UUID (F7)"
+grep -q '^mount -t ext4 -o rw,noatime,commit=60 "$dev" /newroot ' "$INIT" && ok "init mounts the root with rw,noatime,commit=60 (the options of the old fstab line)" || bad "the root mount options changed"
+grep -v '^#' "$HERE/overlay/etc/fstab" | grep -Eq '(LABEL|UUID|PARTUUID|PARTLABEL)=' && bad "the fstab still mounts by a label or a UUID" || ok "the fstab mounts nothing by a label or a UUID (F7)"
+grep -v '^#' "$HERE/overlay/etc/fstab" | awk '$2 == "/" || $2 == "/data"' | grep -q . && bad "the fstab has a root or a /data line" || ok "the fstab has no root and no /data line"
+# find_root of init, run with stand-ins: part_by_name finds the slot's partition
+sed -n '/^# find_root: the device of the partition with the GPT name/,/^}$/p' "$INIT" > "$T/find_root.sh"
 cat > "$T/rig.sh" <<'RIG'
 part_by_name() { for n in $PARTS; do [ "$n" = "$1" ] && { echo "/dev/blk-$1"; return 0; }; done; return 1; }
 blkid() { printf '%s' "$BLKID"; }
@@ -60,6 +65,7 @@ cat "$T/find_root.sh" >> "$T/rig.sh"
 # [ -b ] is true only for block devices: stand in with a function
 sed -i 's/\[ -b "\$d" \]/isblk "$d"/' "$T/rig.sh"
 echo 'isblk() { case $1 in /dev/blk-*) return 0;; esac; return 1; }; find_root' >> "$T/rig.sh"
+[ -s "$T/find_root.sh" ] && ok "find_root found in init" || bad "find_root not found in init"
 fr() { rootname=$1 PARTS=$2 BLKID=$3 FINDFS=$4 slot=${5-} sh "$T/rig.sh"; echo ":$?"; }
 two='/dev/mmcblk0p22: LABEL="tsxroot" TYPE="ext4"
 /dev/mmcblk0p23: LABEL="tsxroot" TYPE="ext4"
@@ -73,9 +79,9 @@ eq "$(fr system_a "" "$one" /dev/mmcblk0p22 a)" ":1" "slot A without the GPT nam
 eq "$(fr system_a "system_a system_b" "$two" /dev/mmcblk0p23 a)" "/dev/blk-system_a
 :0" "slot A: the partition named system_a"
 eq "$(fr system_b "" "$two" /dev/mmcblk0p22)" ":1" "no GPT name and two tsxroot: no root (the rescue), never a guess"
-eq "$(fr system_a "" "$one" /dev/mmcblk0p22)" "/dev/mmcblk0p22
-:0" "a RAM boot (no slot), no GPT name and one tsxroot: that one (as before)"
-eq "$(fr system_b "" "$one" /dev/sda1)" ":1" "the one tsxroot is not on the eMMC: no root"
+eq "$(fr system_a "" "$one" /dev/mmcblk0p22)" ":1" "a RAM boot, no GPT name, one tsxroot: no root (no label fallback any more, F7)"
+eq "$(fr system_a "system_a" "$one" /dev/mmcblk0p23)" "/dev/blk-system_a
+:0" "a RAM boot: the partition named system_a"
 
 echo "== mkinitramfs.sh =="
 grep -q '^install -D -m 755 /w/rootfs/overlay/usr/sbin/uc-pxx-slot $R/usr/sbin/uc-pxx-slot$' "$MK" && ok "mkinitramfs.sh installs uc-pxx-slot" || bad "mkinitramfs.sh does not install uc-pxx-slot"

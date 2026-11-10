@@ -177,10 +177,11 @@ initramfs` makes it as the uncompressed cpio archive
    `uc-pxx-slot` reads the word `androidboot.slot_suffix=_a` or `_b` of
    `/proc/device-tree/chosen/u-boot,bootargs`, and the root partition is the
    one with the GPT name `system_a` or `system_b`. A RAM boot has no such
-   word: then `system_a`, as before, and only then, if no partition has the
-   name, the eMMC partition with the label `tsxroot`, when exactly one
-   partition has that label (with mainline in both slots, both have it). A
-   slot boot never falls back to a label. Wait up to 15 seconds for it.
+   property: then `system_a`, as before. A property without one clear slot
+   word starts the rescue system. The root is found only by its GPT name,
+   never by a label or a UUID: with mainline in both slots, `system_a` and
+   `system_b` hold the same image, with the same label and the same UUID.
+   Wait up to 15 seconds for it.
 3. Stop with the rescue system if the partition does not hold an ext4 file
    system with the label `tsxroot`. The script never checks, grows or mounts
    another file system.
@@ -188,7 +189,9 @@ initramfs` makes it as the uncompressed cpio archive
    `e2fsck -y`. If that also fails, start the rescue system.
 5. Grow the file system to fill the partition, if the partition is more than
    64 MiB larger. A new `rootfs.ext4` is smaller than `system_a`.
-6. Mount the file system read-write on `/newroot`.
+6. Mount the file system on `/newroot` with `rw,noatime,commit=60`. The
+   fstab of the root file system has no root line and no `/data` line: a line
+   by `LABEL=` would not be unique with mainline in both slots.
 7. Move `/dev`, `/proc`, `/sys` and `/run` into it and run `switch_root` to
    `/sbin/init`.
 
@@ -455,7 +458,9 @@ bootable slots". Only the reviewed boot-control tool may write it.
 | `vendor_a` (384 MiB) and `oem_a` (1024 MiB) | One LVM physical volume each. Together they hold the volume group `tsx` |
 | `boot_b`, `system_b` and the others of slot B | Stock-based Android userdebug, not changed. It is the fallback and the rescue |
 
-`/data` is the logical volume `tsx/data` (ext4, label `tsxdata`).
+`/data` is the logical volume `tsx/data` (ext4, label `tsxdata`). The service
+`uc-pxx-lvm` activates the volume group and mounts the volume before
+`localmount`, only when it holds ext4 with the label `tsxdata`.
 
 An update writes only slot A. The flash wrapper sets slot A to the state
 "trying" before it writes `boot_a`. A boot that never gets marked as good
@@ -467,6 +472,14 @@ runs out of tries, and U-Boot starts slot B.
 |---|---|
 | `boot_a`, `system_a`, `boot_b`, `system_b` | The uc-pxx boot image and root file system of each slot |
 | `userdata` (6701 MiB) | `/data`, shared by both slots |
+
+Both slots mount `userdata` the same way: `uc-pxx-lvm` mounts the partition
+with the GPT name `userdata` on `/data` when it holds ext4 with the label
+`tsxdata`, and then it never activates the LVM volume group. Step 2 of the
+mainline install makes this file system with the temporary label
+`tsxdata-new` (nothing mounts that), migrates the data of the running slot
+into it and gives it the label `tsxdata` as its last step
+([rootfs.md](rootfs.md) "The data tools of step 2").
 
 An update writes the inactive slot, sets it to "trying" and reboots into it.
 After a healthy boot the boot-marking hook marks the new slot as good. A

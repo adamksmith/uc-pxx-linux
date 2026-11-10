@@ -1,12 +1,22 @@
 #!/sbin/openrc-run
-# The data volume of phase 1 (docs/boot.md "Phase 1"): the LVM volume group tsx
-# over vendor_a and oem_a, with the logical volume data (ext4, label tsxdata,
-# on /data by fstab). This service activates the group before localmount
-# mounts /data. Phase 2 has no volume group (/data is userdata, label
-# tsxdata). The service then does nothing. It never fails the boot. /data has
-# nofail, so a panel with a broken volume keeps its state on the root file
-# system. Log: /run/uc-pxx-lvm.log.
-description="Activate the LVM data volume (volume group tsx) before /data is mounted"
+# /data of the panel (docs/boot.md "Phase 1", "Phase 2"). The fstab has no
+# /data line (MAINLINE-STEP2-DESIGN review F7: a LABEL= line is not unique once
+# a unit has two file systems with the label tsxdata). This service mounts
+# /data before localmount, by device and only after an exact check: an ext4
+# file system with the label tsxdata.
+#   1. Phase 2 (mainline in both slots; step 2 made /data): the partition with
+#      the GPT name userdata. Both slots run this same code, so both mount it.
+#      The service then never activates the LVM volume group.
+#   2. Phase 1: the LVM volume group tsx over vendor_a and oem_a. The service
+#      activates it and mounts the logical volume tsx/data.
+#   3. Neither: /data stays a directory of the root file system, and
+#      everything lives there.
+# A userdata with another label is never mounted: Android's data, or
+# tsxdata-new (a step 2 that has not finished its migration). The service
+# never fails the boot. Log: /run/uc-pxx-lvm.log. (The name stays uc-pxx-lvm
+# until the package uc-pxx-board renames it to uc-pxx-data.)
+# Test hooks: TSX_SYSBLOCK, TSX_DEVDIR, UC_PXX_DATA_MNT, UC_PXX_MOUNTS.
+description="Mount /data: userdata (phase 2) or the LVM data volume (phase 1), ext4 label tsxdata only"
 depend() {
 	after udev-settle modules
 	before localmount fsck tsx-data
@@ -14,18 +24,61 @@ depend() {
 
 VG=${TSX_VG:-tsx}
 LOG=${UC_PXX_LVM_LOG:-/run/uc-pxx-lvm.log}
+SYSB=${TSX_SYSBLOCK:-/sys/class/block}
+DEVD=${TSX_DEVDIR:-/dev}
+MNT=${UC_PXX_DATA_MNT:-/data}
+MOUNTS=${UC_PXX_MOUNTS:-/proc/mounts}
+OPTS=rw,noatime,commit=60
+
+# data_part NAME: the device of the eMMC partition with that GPT name
+data_part() {
+	for _u in "$SYSB"/mmcblk*p*/uevent; do
+		[ -r "$_u" ] && grep -qx "PARTNAME=$1" "$_u" || continue
+		_d=${_u%/uevent}; echo "$DEVD/${_d##*/}"; return 0
+	done
+	return 1
+}
+# is_tsxdata DEV: an ext4 file system with the label tsxdata, exactly (the
+# fixed format of the busybox blkid)
+is_tsxdata() {
+	_o=$(blkid "$1" 2>/dev/null) || return 1
+	[ "$(printf '%s\n' "$_o" | sed -n 's/.* TYPE="\([^"]*\)".*/\1/p')" = ext4 ] || return 1
+	[ "$(printf '%s\n' "$_o" | sed -n 's/.* LABEL="\([^"]*\)".*/\1/p')" = tsxdata ]
+}
+data_mounted() { awk -v m="$MNT" '$2 == m { f = 1 } END { exit !f }' "$MOUNTS" 2>/dev/null; }
+mount_data() {
+	if mount -t ext4 -o "$OPTS" "$1" "$MNT" >> "$LOG" 2>&1; then
+		einfo "uc-pxx-lvm: $2 ($1) on $MNT"
+	else
+		eerror "uc-pxx-lvm: cannot mount $2 ($1) on $MNT (see $LOG). /data stays on the root file system"
+	fi
+}
 
 start() {
-	ebegin "Data volume (LVM volume group $VG)"
+	ebegin "Data file system (/data)"
 	: > "$LOG"
+	if data_mounted; then
+		einfo "uc-pxx-lvm: $MNT is mounted already"
+		eend 0; return 0
+	fi
+	if ud=$(data_part userdata) && is_tsxdata "$ud"; then
+		echo "userdata $ud: ext4 tsxdata (phase 2); the volume group $VG is not activated" >> "$LOG"
+		mount_data "$ud" "userdata"
+		eend 0; return 0
+	fi
 	modprobe -q dm-mod >> "$LOG" 2>&1
 	if ! lvm vgs "$VG" >> "$LOG" 2>&1; then
-		einfo "uc-pxx-lvm: no volume group $VG (phase 2 keeps /data on userdata)"
+		einfo "uc-pxx-lvm: no /data file system (no tsxdata on userdata, no volume group $VG)"
 		eend 0; return 0
 	fi
 	if lvm vgchange -a y --sysinit "$VG" >> "$LOG" 2>&1; then
 		lvm vgmknodes "$VG" >> "$LOG" 2>&1
 		einfo "uc-pxx-lvm: volume group $VG active"
+		if is_tsxdata "$DEVD/$VG/data"; then
+			mount_data "$DEVD/$VG/data" "the LVM volume $VG/data"
+		else
+			eerror "uc-pxx-lvm: $DEVD/$VG/data is not an ext4 file system with the label tsxdata. /data stays on the root file system"
+		fi
 	else
 		eerror "uc-pxx-lvm: cannot activate the volume group $VG (see $LOG). /data stays on the root file system"
 	fi

@@ -1,10 +1,14 @@
 # <fs>          <mountpoint>  <type>  <opts>                      <dump> <pass>
-# root: system_a (1792 MiB), ext4 label tsxroot. The initramfs checks it and
-# grows it to fill the partition before it mounts it.
-LABEL=tsxroot   /             ext4    rw,noatime,commit=60        0      1
-# data: ext4 label tsxdata (panel.conf, browser profile and logs, see tsx-data).
-# Phase 1: the LVM volume tsx/data over vendor_a and oem_a, activated by
-# uc-pxx-lvm. Phase 2: userdata. nofail: a panel without it still boots, and
-# everything then lives on the root file system.
-LABEL=tsxdata   /data         ext4    rw,noatime,commit=60,nofail 0      0
+# No root line and no /data line (MAINLINE-STEP2-DESIGN review F7): a line by
+# LABEL= or UUID= is not unique once both slots hold mainline (system_a and
+# system_b hold the same image, with the same label and UUID), and mount -a
+# could then mount the other slot's root file system or a second data file
+# system.
+# root: the initramfs mounts the partition with the GPT name of the booted
+# slot (system_a or system_b, 1792 MiB, ext4 label tsxroot) with
+# rw,noatime,commit=60, after it checked it and grew it to fill the partition.
+# data: the service uc-pxx-lvm mounts /data before localmount, by device and
+# with an exact label check (ext4 label tsxdata): the partition with the GPT
+# name userdata (phase 2), else the LVM volume tsx/data over vendor_a and
+# oem_a (phase 1). Without either, everything lives on the root file system.
 tmpfs           /tmp          tmpfs   nosuid,nodev,mode=1777      0      0
