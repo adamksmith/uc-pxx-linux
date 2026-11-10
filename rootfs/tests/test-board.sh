@@ -114,8 +114,10 @@ eq "$(sh_run TSX_DT_COMPATIBLE="$T/none")" "model= dt= ha=" "no device tree: no 
 echo "== the files that name the board =="
 grep -qx 'ttyS2' "$HERE/overlay/etc/securetty" && ok "securetty lists ttyS2" || bad "securetty lacks ttyS2"
 grep -q 'ttyS2' "$HERE/overlay/etc/inittab" && ok "inittab has a getty on ttyS2" || bad "inittab lacks ttyS2"
-grep -q '^LABEL=tsxroot[[:space:]]*/[[:space:]]' "$HERE/overlay/etc/fstab" && ok "fstab: root by the label tsxroot" || bad "fstab: no root"
-grep -q '^LABEL=tsxdata[[:space:]]*/data[[:space:]]' "$HERE/overlay/etc/fstab" && ok "fstab: /data by the label tsxdata" || bad "fstab: no /data"
+# F7: the initramfs mounts the root (by GPT name), uc-pxx-lvm mounts /data (by device): no LABEL= line
+grep -v '^#' "$HERE/overlay/etc/fstab" | awk '$2 == "/"' | grep -q . && bad "fstab: a root line" || ok "fstab: no root line (the initramfs mounts the root)"
+grep -v '^#' "$HERE/overlay/etc/fstab" | awk '$2 == "/data"' | grep -q . && bad "fstab: a /data line" || ok "fstab: no /data line (uc-pxx-lvm mounts it)"
+grep -q '^tmpfs[[:space:]]*/tmp[[:space:]]' "$HERE/overlay/etc/fstab" && ok "fstab: /tmp" || bad "fstab: no /tmp"
 CONF=$HERE/overlay/etc/tsx/buttons-board.conf
 pairs=$(awk '$1 == "button" { print $2 "=" $3 }' "$CONF" | tr '\n' ' ')
 eq "$pairs" "teams=148 headset=149 speaker=202 volume_down=114 volume_up=115 mic=113 " "buttons-board.conf: the six keys in physical order"
