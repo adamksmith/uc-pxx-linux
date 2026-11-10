@@ -1,0 +1,343 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# uc-pxx-data-migrate: make /data on userdata for mainline in both slots
+# (MAINLINE-STEP2-DESIGN §6, §10 L8). Step 2 of the mainline install runs it
+# from the running, successful slot K (A or B), as its plan steps data-format
+# and data-migrate: after the writes of the other slot are verified and before
+# the other slot is armed, so the other slot never boots without its /data.
+#
+#   uc-pxx-data-migrate status          print what userdata holds (read only)
+#   uc-pxx-data-migrate check           the preflight of both steps (read only)
+#   uc-pxx-data-migrate format --yes    userdata becomes an empty ext4 file
+#                                       system with the label tsxdata-new
+#   uc-pxx-data-migrate migrate --yes   the data of the running slot goes into
+#                                       it; the label tsxdata is the last step
+#
+# The label rule (review F1). Only an ext4 file system with the label tsxdata
+# is /data: uc-pxx-lvm mounts it in both slots, and tsx-data then moves the
+# directories of a root file system into it. tsxdata-new is never mounted.
+# So a cut before the last step leaves a userdata that nothing uses, the
+# running slot keeps its data on its own root file system, and format and
+# migrate can run again. After the last step userdata is a finished /data:
+# both commands refuse it (exit 4).
+#
+# status prints one word:
+#   finished  ext4 with the label tsxdata (a finished /data)
+#   new       ext4 with the label tsxdata-new (formatted, not migrated)
+#   other     anything else (Android's data, f2fs, an encrypted block device,
+#             no file system)
+#
+# format, after the preflight (refused: a finished /data, a mounted or held
+# userdata, a node that is not the userdata of the layout):
+#   1. discard the whole partition (blkdiscard; a failure is only a warning),
+#   2. write zeros to the first and the last MiB (no old superblock stays),
+#   3. mkfs.ext4 -L tsxdata-new -m 0 -E nodiscard,
+#   4. blkid must show ext4 with the label tsxdata-new.
+#
+# migrate, after the preflight (refused: userdata is not tsxdata-new, a
+# finished /data, one of the three Wi-Fi/Bluetooth files is missing):
+#   1. stop the services that write the panel data (UC_PXX_MIGRATE_SERVICES),
+#   2. e2fsck -p, mount userdata on a private folder, delete what a cut run
+#      left there,
+#   3. copy all of /data (the folder of the root file system, or the phase-1
+#      volume that is mounted there), then each directory of tsx-data to the
+#      place tsx-data uses (/data/<dir>): from /data/<dir> when tsx-data moved
+#      it there already (its marker .tsx-moved), else from /<dir> of the root
+#      file system. Each copy is compared by its tree digest (the rule of
+#      tsx-data), up to three tries, then the marker .tsx-moved is written,
+#   4. copy the three vendor files of Wi-Fi and Bluetooth from /lib/firmware
+#      into /data/uc-pxx/firmware (uc-pxx-firmware reads them there first),
+#   5. write the record /data/uc-pxx/data-migrate.txt,
+#   6. as the last step: the label tsxdata (the ioctl FS_IOC_SETFSLABEL of the
+#      mounted file system), unmount, e2fsck -n, blkid must show tsxdata.
+# It never deletes or changes the data of the root file system, and it writes
+# no partition other than userdata. On a failure it starts the stopped
+# services again.
+#
+# Preflight of both (also `check`): the partition with the GPT name userdata is
+# mmcblk0p28 (start 16811008, 13724639 sectors) on the eMMC; the system runs
+# from a slot boot (uc-pxx-slot a or b) with its root on system_<slot>; the
+# fstab of the running system mounts nothing by LABEL= (the build of review
+# F7); no other run holds /run/uc-pxx-data.lock.
+#
+# Exit: 0 done | 1 refused, nothing written | 2 usage | 3 failed after the
+# first write: userdata is not a finished /data and nothing mounts it, the data
+# of the running slot is unchanged; run format and migrate again | 4 userdata
+# is a finished /data (tsxdata): refused, nothing written.
+#
+# Test hooks: TSX_SYSBLOCK (/sys/class/block), TSX_DEVDIR (/dev), TSX_MOUNTS
+# (/proc/mounts), UC_PXX_MOUNTINFO (/proc/self/mountinfo), UC_PXX_SLOT
+# (uc-pxx-slot), UC_PXX_SRC (/: the tree of the running system that migrate
+# reads), UC_PXX_FSTAB (/etc/fstab), UC_PXX_RUN (/run), UC_PXX_RC_SERVICE
+# (rc-service), UC_PXX_USERDATA_START, UC_PXX_USERDATA_SECTORS,
+# UC_PXX_MIGRATE_SERVICES, UC_PXX_SETLABEL (the command that sets the label of
+# a mounted file system: SETLABEL MOUNTPOINT LABEL).
+set -u
+SYSB=${TSX_SYSBLOCK:-/sys/class/block}
+DEVD=${TSX_DEVDIR:-/dev}
+MOUNTS=${TSX_MOUNTS:-/proc/mounts}
+MINFO=${UC_PXX_MOUNTINFO:-/proc/self/mountinfo}
+SLOTCMD=${UC_PXX_SLOT:-/usr/sbin/uc-pxx-slot}
+SRC=${UC_PXX_SRC:-}
+FSTAB=${UC_PXX_FSTAB:-/etc/fstab}
+RUN=${UC_PXX_RUN:-/run}
+RCS=${UC_PXX_RC_SERVICE:-rc-service}
+UD_NAME=userdata UD_DEV=mmcblk0p28
+UD_START=${UC_PXX_USERDATA_START:-16811008}
+UD_SECTORS=${UC_PXX_USERDATA_SECTORS:-13724639}
+SERVICES=${UC_PXX_MIGRATE_SERVICES-tsx-kiosk tsx-voice tsx-sendspin tsx-esphome tsx-mqtt tsx-setup crond syslog}
+# the directories of tsx-data (all that any profile moves; one that a root
+# file system does not have is left out)
+DIRS="var/lib/kiosk var/log var/lib/tsx var/lib/sendspin var/lib/tsx-voice root home"
+# the vendor files of Wi-Fi and Bluetooth: the name in /data/uc-pxx/firmware,
+# then the copy in /lib/firmware (uc-pxx-firmware)
+FW='fw_bcm43456c5_ag.bin brcm/brcmfmac43456-sdio.bin
+nvram_ap6256_FCC.txt brcm/brcmfmac43456-sdio.txt
+BCM4345C5.hcd brcm/BCM4345C5.hcd'
+NEW=tsxdata-new DONE=tsxdata
+MNT=$RUN/uc-pxx-data-new
+LOG=$RUN/uc-pxx-data-migrate.log
+STOPPED=
+say() { echo "uc-pxx-data-migrate: $*" >&2; echo "uc-pxx-data-migrate: $*" >> "$LOG" 2>/dev/null; }
+refuse() { say "REFUSED: $*"; exit 1; }
+finished() { say "REFUSED: userdata is a finished /data (ext4 $DONE): nothing to do, nothing written"; exit 4; }
+fail() {
+	say "FAILED: $*"
+	if [ -n "${MOUNTED:-}" ]; then umount "$MNT" 2>/dev/null || umount -l "$MNT" 2>/dev/null; fi
+	start_again
+	say "userdata is not a finished /data and nothing mounts it. The data of this slot is unchanged. Run format and migrate again."
+	exit 3
+}
+
+# ------------------------------------------------------------- facts ---
+part() {
+	for _u in "$SYSB"/mmcblk*p*/uevent; do
+		[ -r "$_u" ] && grep -qx "PARTNAME=$1" "$_u" || continue
+		_d=${_u%/uevent}; echo "${_d##*/}"; return 0
+	done
+	return 1
+}
+blk_field() { blkid "$1" 2>/dev/null | sed -n "s/.* $2=\"\\([^\"]*\\)\".*/\\1/p"; }
+# state DEV: finished | new | other
+state() {
+	if [ "$(blk_field "$1" TYPE)" = ext4 ]; then
+		case $(blk_field "$1" LABEL) in
+		"$DONE") echo finished; return;;
+		"$NEW") echo new; return;;
+		esac
+	fi
+	echo other
+}
+in_use() {   # DEV: mounted (by its path or its real path) or held (dm, md)
+	_r=$(readlink -f "$1" 2>/dev/null || echo "$1")
+	awk -v a="$1" -v b="$_r" '$1 == a || $1 == b { f = 1 } END { exit !f }' "$MOUNTS" 2>/dev/null && return 0
+	[ -d "$SYSB/$UD_DEV/holders" ] && [ -n "$(ls -A "$SYSB/$UD_DEV/holders" 2>/dev/null)" ] && return 0
+	return 1
+}
+
+# preflight: sets DEV (userdata) and SLOT; refuses with exit 1
+preflight() {
+	exec 7>"$RUN/uc-pxx-data.lock"
+	flock -n 7 || refuse "another run of uc-pxx-data-migrate or uc-pxx-data-release holds $RUN/uc-pxx-data.lock"
+	p=$(part "$UD_NAME") || refuse "no partition with the GPT name $UD_NAME"
+	[ "$p" = "$UD_DEV" ] || refuse "$UD_NAME is $p, not $UD_DEV"
+	mt=$(cat "$SYSB/${p%p*}/device/type" 2>/dev/null)
+	case $mt in MMC*) ;; *) refuse "${p%p*} is not an eMMC (type '${mt:-unknown}')";; esac
+	[ "$(cat "$SYSB/$p/start" 2>/dev/null)" = "$UD_START" ] || refuse "$UD_NAME does not start at sector $UD_START"
+	[ "$(cat "$SYSB/$p/size" 2>/dev/null)" = "$UD_SECTORS" ] || refuse "$UD_NAME does not have $UD_SECTORS sectors"
+	DEV=$DEVD/$p
+	[ -b "$DEV" ] || [ -L "$DEV" ] || refuse "$DEV is not a block device"
+	SLOT=$("$SLOTCMD" 2>/dev/null) || refuse "no booted slot (a RAM boot, or uc-pxx-slot cannot read it): step 2 runs only from a slot boot"
+	case $SLOT in a|b) ;; *) refuse "uc-pxx-slot printed '$SLOT'";; esac
+	rp=$(part "system_$SLOT") || refuse "no partition named system_$SLOT"
+	want=$(cat "$SYSB/$rp/dev" 2>/dev/null)
+	got=$(awk '$5 == "/" { d = $3 } END { print d }' "$MINFO" 2>/dev/null)
+	[ -n "$want" ] && [ "$got" = "$want" ] || refuse "the root file system (${got:-unknown}) is not system_$SLOT (${want:-unknown}): the running slot is not the one U-Boot started"
+	grep -v '^[[:space:]]*#' "$FSTAB" 2>/dev/null | grep -Eq '(^|[[:space:]])(LABEL|UUID)=' &&
+		refuse "$FSTAB of the running system mounts by LABEL= or UUID=: step 2 needs the label-free build (review F7)"
+	in_use "$DEV" && refuse "$DEV ($UD_NAME) is mounted or held"
+	STATE=$(state "$DEV")
+	say "userdata $DEV: $STATE; the running slot: $(echo "$SLOT" | tr a-z A-Z), root system_$SLOT"
+}
+
+fw_check() {
+	echo "$FW" | while read -r v d; do
+		[ -s "$SRC/lib/firmware/$d" ] || { echo "$d"; }
+	done
+}
+
+# ---------------------------------------------------------- services ---
+stop_services() {
+	for s in $SERVICES; do
+		"$RCS" -q "$s" status > /dev/null 2>&1 || continue
+		if "$RCS" -q "$s" stop > /dev/null 2>&1; then STOPPED="$STOPPED $s"; say "stopped $s"
+		else say "WARNING: cannot stop $s"; fi
+	done
+}
+start_again() {
+	for s in $STOPPED; do "$RCS" -q "$s" start > /dev/null 2>&1 && say "started $s again"; done
+	STOPPED=
+}
+
+# ------------------------------------------------------------- copies ---
+# the rule of tsx-data: "file <sha256> <path>" per file, "link <target>
+# <path>" per symlink, sorted
+tree_digest() {
+	( cd "$1" 2>/dev/null || exit 0
+	  find . \( -type f -o -type l \) 2>/dev/null | while read -r p; do
+		if [ -L "$p" ]; then echo "link $(readlink "$p") $p"
+		else echo "file $(sha256sum "$p" 2>/dev/null | cut -d' ' -f1) $p"; fi
+	  done ) | sort
+}
+empty_dir() { find "$1" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null; }
+# copy_dir SRC DST: DST becomes a copy of SRC (owner and mode of the folder
+# too), checked by the tree digest; three tries
+copy_dir() {
+	_t=1
+	while [ $_t -le 3 ]; do
+		mkdir -p "$2" && empty_dir "$2"
+		if cp -a "$1/." "$2/" 2>> "$LOG"; then
+			_a=$(tree_digest "$1"); _b=$(tree_digest "$2")
+			if [ "$_a" = "$_b" ]; then
+				chown "$(stat -c '%u:%g' "$1")" "$2" 2>/dev/null; chmod "$(stat -c '%a' "$1")" "$2" 2>/dev/null
+				DIGESTS="$DIGESTS$(printf '%s' "$_a" | sha256sum | cut -d' ' -f1) ${2#"$MNT"/}
+"
+				return 0
+			fi
+			say "the copy of $1 differs from its source (try $_t of 3)"
+		else
+			say "cp of $1 failed (try $_t of 3)"
+		fi
+		_t=$((_t + 1))
+	done
+	return 1
+}
+
+do_migrate() {
+	[ "$STATE" = finished ] && finished
+	[ "$STATE" = new ] || refuse "userdata is not ext4 $NEW: run format first"
+	miss=$(fw_check)
+	[ -z "$miss" ] || refuse "Wi-Fi/Bluetooth files missing in $SRC/lib/firmware: $(echo $miss): they must go to /data before the vendor partitions go"
+	[ -d "$SRC/data" ] || refuse "$SRC/data is not a folder"
+	trap 'fail "a signal stopped the migration"' INT TERM HUP
+	stop_services
+	e2fsck -p "$DEV" >> "$LOG" 2>&1; rc=$?
+	[ $rc -lt 4 ] || fail "e2fsck -p of $DEV gave $rc"
+	mkdir -p "$MNT"
+	mount -t ext4 -o rw,noatime "$DEV" "$MNT" 2>> "$LOG" || fail "cannot mount $DEV on $MNT"
+	MOUNTED=1
+	mountpoint -q "$MNT" || fail "$MNT is not a mount point after the mount"
+	[ "$(state "$DEV")" = new ] || fail "userdata changed while it was mounted"
+	# what a cut run left there
+	for e in "$MNT"/* "$MNT"/.[!.]* "$MNT"/..?*; do
+		[ -e "$e" ] || [ -L "$e" ] || continue
+		[ "${e##*/}" = lost+found ] && continue
+		rm -rf "$e" || fail "cannot delete $e"
+	done
+	DIGESTS=
+	# 1. all of /data
+	for e in "$SRC/data"/* "$SRC/data"/.[!.]* "$SRC/data"/..?*; do
+		[ -e "$e" ] || [ -L "$e" ] || continue
+		n=${e##*/}
+		[ "$n" = lost+found ] && continue
+		if [ -d "$e" ] && [ ! -L "$e" ]; then copy_dir "$e" "$MNT/$n" || fail "the copy of $e"
+		else cp -a "$e" "$MNT/$n" && { [ -L "$e" ] || cmp -s "$e" "$MNT/$n"; } || fail "the copy of $e"; fi
+	done
+	# 2. the directories of tsx-data
+	for d in $DIRS; do
+		if [ -e "$SRC/data/$d/.tsx-moved" ]; then
+			# moved already: it is in the copy of /data; check it once more
+			[ "$(tree_digest "$SRC/data/$d")" = "$(tree_digest "$MNT/$d")" ] || fail "the copy of the moved /$d differs"
+			say "/$d: moved by tsx-data before, copied with /data"
+		elif [ -d "$SRC/$d" ] && [ ! -L "$SRC/$d" ]; then
+			copy_dir "$SRC/$d" "$MNT/$d" || fail "the copy of /$d"
+			: > "$MNT/$d/.tsx-moved" || fail "the marker of /$d"
+			say "/$d: copied from the root file system, marker written"
+		else
+			say "/$d: not on this root file system, left out"
+		fi
+	done
+	# 3. the vendor files of Wi-Fi and Bluetooth
+	mkdir -p "$MNT/uc-pxx/firmware" || fail "mkdir uc-pxx/firmware"
+	echo "$FW" | while read -r v d; do
+		cp "$SRC/lib/firmware/$d" "$MNT/uc-pxx/firmware/$v.part" &&
+			mv "$MNT/uc-pxx/firmware/$v.part" "$MNT/uc-pxx/firmware/$v" &&
+			cmp -s "$SRC/lib/firmware/$d" "$MNT/uc-pxx/firmware/$v" || exit 1
+	done || fail "the copy of the Wi-Fi/Bluetooth files"
+	# 4. the record
+	{ echo "uc-pxx-data-migrate: /data of mainline (MAINLINE-STEP2-DESIGN §6)"
+	  echo "from slot $SLOT (root system_$SLOT), $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	  echo "tree digests (sha256 of the tsx-data digest, then the folder):"
+	  printf '%s' "$DIGESTS"
+	  echo "firmware: $(echo "$FW" | awk '{ printf "%s ", $1 }')"; } > "$MNT/uc-pxx/data-migrate.txt" || fail "the record"
+	sync
+	# 5. the last step: the label
+	say "all copies checked; setting the label $DONE (the last step)"
+	$SETLABEL "$MNT" "$DONE" 2>> "$LOG" || fail "cannot set the label $DONE"
+	sync
+	umount "$MNT" || fail "cannot unmount $MNT"
+	MOUNTED=
+	e2fsck -n "$DEV" >> "$LOG" 2>&1 || say "WARNING: e2fsck -n of $DEV reports a problem (see $LOG)"
+	sync
+	[ "$(state "$DEV")" = finished ] || fail "blkid does not show ext4 $DONE after the label"
+	trap - INT TERM HUP
+	say "done: userdata is /data (ext4 $DONE). Both slots mount it at their next boot"
+	echo finished
+}
+
+do_format() {
+	[ "$STATE" = finished ] && finished
+	trap 'fail "a signal stopped the format"' INT TERM HUP
+	say "formatting $DEV: Android's data (or what userdata holds) is erased now"
+	# util-linux blkdiscard needs -f on a device with a file system; the busybox one has no -f
+	blkdiscard -f "$DEV" >> "$LOG" 2>&1 || blkdiscard "$DEV" >> "$LOG" 2>&1 ||
+		say "WARNING: blkdiscard of $DEV failed (zeroing the first and last MiB anyway)"
+	dd if=/dev/zero of="$DEV" bs=512 count=2048 conv=fsync 2>> "$LOG" || fail "cannot zero the first MiB"
+	dd if=/dev/zero of="$DEV" bs=512 seek=$((UD_SECTORS - 2048)) count=2048 conv=fsync 2>> "$LOG" || fail "cannot zero the last MiB"
+	mkfs.ext4 -F -q -L "$NEW" -m 0 -E nodiscard "$DEV" >> "$LOG" 2>&1 || fail "mkfs.ext4 failed"
+	sync
+	[ "$(state "$DEV")" = new ] || fail "blkid does not show ext4 $NEW after mkfs.ext4"
+	trap - INT TERM HUP
+	say "done: userdata is an empty ext4 $NEW (nothing mounts it). Next: migrate"
+	echo new
+}
+
+# FS_IOC_SETFSLABEL on the mounted file system (the rootfs has no e2label)
+setlabel_ioctl() {
+	python3 -I -c '
+import fcntl, os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY)
+lab = sys.argv[2].encode()
+assert 0 < len(lab) < 16
+fcntl.ioctl(fd, 0x41009432, lab + bytes(256 - len(lab)))  # FS_IOC_SETFSLABEL, char[256]
+os.fsync(fd)
+' "$1" "$2"
+}
+SETLABEL=${UC_PXX_SETLABEL:-setlabel_ioctl}
+
+cmd=${1:-}; yes=${2:-}
+case $cmd in
+status|check|format|migrate) ;;
+-h|--help) sed -n '2,/^set -u$/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0;;
+*) echo "usage: uc-pxx-data-migrate status | check | format --yes | migrate --yes" >&2; exit 2;;
+esac
+mkdir -p "$RUN"
+if [ "$cmd" = status ]; then
+	p=$(part "$UD_NAME") || { echo "no partition named $UD_NAME" >&2; exit 1; }
+	state "$DEVD/$p"; exit 0
+fi
+case $cmd:$yes in
+format:--yes|migrate:--yes|check:) ;;
+*) echo "usage: uc-pxx-data-migrate status | check | format --yes | migrate --yes" >&2; exit 2;;
+esac
+preflight
+case $cmd in
+check)
+	[ "$STATE" = finished ] && finished
+	miss=$(fw_check)
+	[ -z "$miss" ] && say "Wi-Fi/Bluetooth files: all three in $SRC/lib/firmware" || say "Wi-Fi/Bluetooth files missing: $(echo $miss) (migrate refuses)"
+	say "check OK: format may run$([ "$STATE" = new ] && echo ", migrate may run")"
+	echo "$STATE";;
+format) do_format;;
+migrate) do_migrate;;
+esac

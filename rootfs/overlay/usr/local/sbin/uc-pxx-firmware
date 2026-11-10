@@ -13,6 +13,11 @@
 #
 # The partition is mounted read-only. The program never writes the eMMC.
 #
+# First it looks in /data/uc-pxx/firmware: step 2 of the mainline install
+# (uc-pxx-data-migrate) copies the three vendor files there, under their
+# vendor names, before it erases the Android partitions of the other slot
+# (MAINLINE-STEP2-DESIGN §6.3, L7). Then the vendor partitions.
+#
 # The drivers brcmfmac, hci_uart_bcm and cfg80211 are built into the kernel.
 # They probe from the initramfs, before the root file system is mounted, so
 # they never find these files at their probe. After the copy the program
@@ -33,20 +38,20 @@
 #
 # Env (test hooks and settings): UC_PXX_FW_PARTS (partition names to try, in
 # order, default "vendor_b vendor_a"), UC_PXX_FW_SRC (a folder with the vendor
-# files, used instead of a partition), UC_PXX_FW_DEST (default /lib/firmware),
+# files, used instead of a partition), UC_PXX_FW_DATA (the folder of the
+# vendor files on /data, default /data/uc-pxx/firmware), UC_PXX_FW_DEST
+# (default /lib/firmware),
 # UC_PXX_SYSFS (default /sys), UC_PXX_DMESG (the command that prints the
 # kernel log, default dmesg), UC_PXX_IW (default iw), UC_PXX_FW_WAIT (seconds
 # to wait for each interface, default 10), TSX_SYSBLOCK, TSX_DEVDIR,
 # UC_PXX_RUN.
 #
 # TODO:
-#   - Phase 1 has the files in vendor_b (the stock Android of slot B). Phase 2
-#     has no vendor partition. The installer must save the files to /data
-#     first, and this program must read them from there.
 #   - Choose the NVRAM file by region (FCC for the US, CE for the EU). Today
 #     the program copies the FCC file. The stock firmware also has a CE file.
 set -eu
 SRC_PARTS=${UC_PXX_FW_PARTS:-vendor_b vendor_a}
+DATA_FW=${UC_PXX_FW_DATA:-/data/uc-pxx/firmware}
 DEST=${UC_PXX_FW_DEST:-/lib/firmware}
 RUN=${UC_PXX_RUN:-/run}
 SYS=${UC_PXX_SYSFS:-/sys}
@@ -81,23 +86,29 @@ part_dev() {
 	return 1
 }
 
-copy_from() {
+# copy_dir DIR WHAT: copy the missing files from DIR/<vendor name>
+copy_dir() {
 	echo "$MAP" | while read -r v d; do
 		[ -s "$DEST/$d" ] && continue
-		if [ -s "$1/etc/firmware/$v" ]; then
+		if [ -s "$1/$v" ]; then
 			mkdir -p "$DEST/$(dirname "$d")"
-			cp "$1/etc/firmware/$v" "$DEST/$d.part" && mv "$DEST/$d.part" "$DEST/$d"
+			cp "$1/$v" "$DEST/$d.part" && mv "$DEST/$d.part" "$DEST/$d"
 			echo "$d" >> "$COPIED"
-			say "copied $d"
+			say "copied $d (from $2)"
 		else
-			say "the vendor partition has no $v"
+			say "$2 has no $v"
 		fi
 	done
 }
+copy_from() { copy_dir "$1/etc/firmware" "the vendor partition"; }
 
 copy_files() {
 	if [ -z "$(missing)" ]; then say "all firmware files are there"; return 0; fi
 	if [ -n "${UC_PXX_FW_SRC:-}" ]; then copy_from "$UC_PXX_FW_SRC"; return 0; fi
+	if [ -d "$DATA_FW" ]; then
+		copy_dir "$DATA_FW" "$DATA_FW"
+		[ -z "$(missing)" ] && return 0
+	fi
 	for p in $SRC_PARTS; do
 		dev=$(part_dev "$p") || continue
 		mkdir -p "$MNT"

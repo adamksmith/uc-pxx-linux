@@ -1,0 +1,202 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# uc-pxx-data-release: give userdata back (MAINLINE-STEP2-DESIGN §7.3 step 1,
+# §10 L8), for "put Android back" on a unit with mainline in both slots. It
+# runs in the slot that keeps mainline (normally A). It writes no A/B data
+# and no partition of a slot.
+#
+#   uc-pxx-data-release check           the preflight (read only)
+#   uc-pxx-data-release copy --yes      /data back onto the root file system
+#                                       of the running slot, then the label
+#                                       tsxdata-old (no slot mounts it again)
+#   uc-pxx-data-release wipe --yes      after a restart: zeros over the first
+#                                       and the last MiB of a userdata with the
+#                                       label tsxdata-old (no file system is
+#                                       left; Android formats it)
+#
+# copy (/data is the mounted userdata, ext4 tsxdata):
+#   1. stop the services that write the panel data,
+#   2. mount the root file system of the running slot a second time on a
+#      private folder (that view has no bind mounts of tsx-data),
+#   3. for each directory that tsx-data moved (/data/<dir>/.tsx-moved): the
+#      copy on the root file system is replaced by /data/<dir> (without the
+#      marker), checked by the tree digest; every other entry of /data goes to
+#      /data/<entry> of the root file system, checked the same way,
+#   4. the label tsxdata-old on the mounted userdata (the last step; the ioctl
+#      FS_IOC_SETFSLABEL). The next boot mounts no /data, and tsx-data finds
+#      the directories on the root file system.
+# A cut before step 4: userdata is still /data, the next boot uses it, and
+# copy can run again. Restart after copy. The other slot (if it is mainline)
+# keeps its own root file system as it was.
+#
+# Exit: 0 done | 1 refused, nothing written | 2 usage | 3 failed after the
+# first write: userdata is still /data (tsxdata), restart and run copy again.
+#
+# Test hooks: as uc-pxx-data-migrate (TSX_SYSBLOCK, TSX_DEVDIR, TSX_MOUNTS,
+# UC_PXX_MOUNTINFO, UC_PXX_SLOT, UC_PXX_SRC, UC_PXX_RUN, UC_PXX_RC_SERVICE,
+# UC_PXX_USERDATA_START, UC_PXX_USERDATA_SECTORS, UC_PXX_MIGRATE_SERVICES,
+# UC_PXX_SETLABEL), UC_PXX_DATA (/data: where userdata is mounted).
+set -u
+SYSB=${TSX_SYSBLOCK:-/sys/class/block}
+DEVD=${TSX_DEVDIR:-/dev}
+MOUNTS=${TSX_MOUNTS:-/proc/mounts}
+MINFO=${UC_PXX_MOUNTINFO:-/proc/self/mountinfo}
+SLOTCMD=${UC_PXX_SLOT:-/usr/sbin/uc-pxx-slot}
+SRC=${UC_PXX_SRC:-}
+DATA=${UC_PXX_DATA:-/data}
+RUN=${UC_PXX_RUN:-/run}
+RCS=${UC_PXX_RC_SERVICE:-rc-service}
+UD_NAME=userdata UD_DEV=mmcblk0p28
+UD_START=${UC_PXX_USERDATA_START:-16811008}
+UD_SECTORS=${UC_PXX_USERDATA_SECTORS:-13724639}
+SERVICES=${UC_PXX_MIGRATE_SERVICES-tsx-kiosk tsx-voice tsx-sendspin tsx-esphome tsx-mqtt tsx-setup crond syslog}
+DIRS="var/lib/kiosk var/log var/lib/tsx var/lib/sendspin var/lib/tsx-voice root home"
+DONE=tsxdata OLD=tsxdata-old
+RR=$RUN/uc-pxx-rootfs
+LOG=$RUN/uc-pxx-data-release.log
+STOPPED= RMOUNTED=
+say() { echo "uc-pxx-data-release: $*" >&2; echo "uc-pxx-data-release: $*" >> "$LOG" 2>/dev/null; }
+refuse() { say "REFUSED: $*"; exit 1; }
+fail() {
+	say "FAILED: $*"
+	[ -z "$RMOUNTED" ] || umount "$RR" 2>/dev/null || umount -l "$RR" 2>/dev/null
+	for s in $STOPPED; do "$RCS" -q "$s" start > /dev/null 2>&1; done
+	say "userdata is still /data. Restart, then run copy again."
+	exit 3
+}
+part() {
+	for _u in "$SYSB"/mmcblk*p*/uevent; do
+		[ -r "$_u" ] && grep -qx "PARTNAME=$1" "$_u" || continue
+		_d=${_u%/uevent}; echo "${_d##*/}"; return 0
+	done
+	return 1
+}
+blk_field() { blkid "$1" 2>/dev/null | sed -n "s/.* $2=\"\\([^\"]*\\)\".*/\\1/p"; }
+is_fs() { [ "$(blk_field "$1" TYPE)" = ext4 ] && [ "$(blk_field "$1" LABEL)" = "$2" ]; }
+mounted_on() {   # DEV MOUNTPOINT
+	_r=$(readlink -f "$1" 2>/dev/null || echo "$1")
+	awk -v a="$1" -v b="$_r" -v m="$2" '($1 == a || $1 == b) && $2 == m { f = 1 } END { exit !f }' "$MOUNTS" 2>/dev/null
+}
+dev_mounted() {
+	_r=$(readlink -f "$1" 2>/dev/null || echo "$1")
+	awk -v a="$1" -v b="$_r" '$1 == a || $1 == b { f = 1 } END { exit !f }' "$MOUNTS" 2>/dev/null
+}
+tree_digest() {
+	( cd "$1" 2>/dev/null || exit 0
+	  find . \( -type f -o -type l \) 2>/dev/null | while read -r p; do
+		if [ -L "$p" ]; then echo "link $(readlink "$p") $p"
+		else echo "file $(sha256sum "$p" 2>/dev/null | cut -d' ' -f1) $p"; fi
+	  done ) | sort
+}
+setlabel_ioctl() {
+	python3 -I -c '
+import fcntl, os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY)
+lab = sys.argv[2].encode()
+assert 0 < len(lab) < 16
+fcntl.ioctl(fd, 0x41009432, lab + bytes(256 - len(lab)))  # FS_IOC_SETFSLABEL, char[256]
+os.fsync(fd)
+' "$1" "$2"
+}
+SETLABEL=${UC_PXX_SETLABEL:-setlabel_ioctl}
+
+node() {
+	p=$(part "$UD_NAME") || refuse "no partition with the GPT name $UD_NAME"
+	[ "$p" = "$UD_DEV" ] || refuse "$UD_NAME is $p, not $UD_DEV"
+	mt=$(cat "$SYSB/${p%p*}/device/type" 2>/dev/null)
+	case $mt in MMC*) ;; *) refuse "${p%p*} is not an eMMC";; esac
+	[ "$(cat "$SYSB/$p/start" 2>/dev/null)" = "$UD_START" ] || refuse "$UD_NAME does not start at sector $UD_START"
+	[ "$(cat "$SYSB/$p/size" 2>/dev/null)" = "$UD_SECTORS" ] || refuse "$UD_NAME does not have $UD_SECTORS sectors"
+	DEV=$DEVD/$p
+}
+slot_root() {
+	SLOT=$("$SLOTCMD" 2>/dev/null) || refuse "no booted slot (a RAM boot?)"
+	case $SLOT in a|b) ;; *) refuse "uc-pxx-slot printed '$SLOT'";; esac
+	rp=$(part "system_$SLOT") || refuse "no partition named system_$SLOT"
+	want=$(cat "$SYSB/$rp/dev" 2>/dev/null)
+	got=$(awk '$5 == "/" { d = $3 } END { print d }' "$MINFO" 2>/dev/null)
+	[ -n "$want" ] && [ "$got" = "$want" ] || refuse "the root file system is not system_$SLOT"
+	RDEV=$DEVD/$rp
+}
+
+cmd=${1:-}; yes=${2:-}
+case $cmd:$yes in
+check:|copy:--yes|wipe:--yes) ;;
+-h:|--help:) sed -n '2,/^set -u$/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0;;
+*) echo "usage: uc-pxx-data-release check | copy --yes | wipe --yes" >&2; exit 2;;
+esac
+mkdir -p "$RUN"
+exec 7>"$RUN/uc-pxx-data.lock"
+flock -n 7 || refuse "another run holds $RUN/uc-pxx-data.lock"
+node
+
+if [ "$cmd" = wipe ]; then
+	is_fs "$DEV" "$OLD" || refuse "userdata is not ext4 $OLD (run copy and restart first)"
+	dev_mounted "$DEV" && refuse "$DEV is mounted: restart first"
+	dd if=/dev/zero of="$DEV" bs=512 count=2048 conv=fsync 2>> "$LOG" || { say "FAILED: the first MiB"; exit 3; }
+	dd if=/dev/zero of="$DEV" bs=512 seek=$((UD_SECTORS - 2048)) count=2048 conv=fsync 2>> "$LOG" || { say "FAILED: the last MiB"; exit 3; }
+	sync
+	[ -z "$(blk_field "$DEV" TYPE)" ] || { say "FAILED: blkid still finds a file system on $DEV"; exit 3; }
+	say "done: userdata has no file system. Android formats it at its first boot (or restore the raw dump)"
+	exit 0
+fi
+
+slot_root
+is_fs "$DEV" "$DONE" || refuse "userdata is not ext4 $DONE"
+mounted_on "$DEV" "$DATA" || refuse "userdata is not mounted on $DATA"
+if [ "$cmd" = check ]; then
+	say "check OK: /data on userdata, the running slot $(echo "$SLOT" | tr a-z A-Z) (root system_$SLOT)"
+	exit 0
+fi
+
+trap 'fail "a signal stopped the copy"' INT TERM HUP
+for s in $SERVICES; do
+	"$RCS" -q "$s" status > /dev/null 2>&1 || continue
+	"$RCS" -q "$s" stop > /dev/null 2>&1 && { STOPPED="$STOPPED $s"; say "stopped $s"; }
+done
+mkdir -p "$RR"
+mount -t ext4 -o rw,noatime "$RDEV" "$RR" 2>> "$LOG" || fail "cannot mount $RDEV on $RR"
+RMOUNTED=1
+mountpoint -q "$RR" || fail "$RR is not a mount point"
+mkdir -p "$RR/data" || fail "mkdir $RR/data"
+# copy_back SRC DST [MARKER]: DST becomes SRC, without the marker file
+copy_back() {
+	mkdir -p "$2" && find "$2" -mindepth 1 -maxdepth 1 -exec rm -rf {} + || return 1
+	cp -a "$1/." "$2/" || return 1
+	rm -f "$2/.tsx-moved"
+	[ "$(tree_digest "$1" | grep -v ' \./\.tsx-moved$')" = "$(tree_digest "$2")" ] || return 1
+	chown "$(stat -c '%u:%g' "$1")" "$2" 2>/dev/null; chmod "$(stat -c '%a' "$1")" "$2" 2>/dev/null
+	return 0
+}
+moved=
+for d in $DIRS; do
+	[ -e "$DATA/$d/.tsx-moved" ] || continue
+	copy_back "$DATA/$d" "$RR/$d" || fail "the copy of /data/$d back to /$d"
+	moved="$moved $d"; say "/$d: back on the root file system"
+done
+for e in "$DATA"/* "$DATA"/.[!.]* "$DATA"/..?*; do
+	[ -e "$e" ] || [ -L "$e" ] || continue
+	n=${e##*/}
+	case $n in lost+found) continue;; esac
+	skip=0
+	for d in $DIRS; do case $d in "$n"|"$n"/*) skip=1;; esac; done
+	if [ $skip = 1 ]; then
+		# the top folder of moved directories (var, root, home): only its
+		# directories of tsx-data go back (above)
+		continue
+	fi
+	if [ -d "$e" ] && [ ! -L "$e" ]; then copy_back "$e" "$RR/data/$n" || fail "the copy of $e"
+	else rm -rf "$RR/data/$n"; cp -a "$e" "$RR/data/$n" || fail "the copy of $e"; fi
+	say "/data/$n: on the root file system"
+done
+sync
+umount "$RR" || fail "cannot unmount $RR"
+RMOUNTED=
+sync
+say "all copies checked; setting the label $OLD on userdata (the last step)"
+$SETLABEL "$DATA" "$OLD" 2>> "$LOG" || fail "cannot set the label $OLD"
+sync
+is_fs "$DEV" "$OLD" || say "WARNING: blkid does not show $OLD yet (it is in the journal; the restart writes it)"
+trap - INT TERM HUP
+say "done: restart now. The next boot mounts no /data; then run: uc-pxx-data-release wipe --yes"
+exit 0

@@ -107,5 +107,22 @@ eq "$(cat "$T/dest/brcm/BCM4345C5.hcd")" bt "an existing file stays"
 rm -f "$T/dest/brcm/BCM4345C5.hcd" "$T/vendor/etc/firmware/BCM4345C5.hcd"
 fw boot 2>&1 | grep -q 'no BCM4345C5.hcd' && ok "a missing vendor file is reported" || bad "no report for a missing vendor file"
 fw bogus >/dev/null 2>&1; eq "$?" 2 "an unknown command exits 2"
+
+echo "== /data/uc-pxx/firmware first (MAINLINE-STEP2-DESIGN L7) =="
+# the copy that step 2 put on /data, by vendor name; no vendor partition at all
+mkdir -p "$T/datafw" "$T/dest2" "$T/noblock"
+echo wifi-d > "$T/datafw/fw_bcm43456c5_ag.bin"; echo nvram-d > "$T/datafw/nvram_ap6256_FCC.txt"; echo bt-d > "$T/datafw/BCM4345C5.hcd"
+fwd() {
+	env -i PATH="$PATH" UC_PXX_FW_DATA="$T/datafw" UC_PXX_FW_DEST="$T/dest2" UC_PXX_RUN="$T" TSX_SYSBLOCK="$T/noblock" \
+		UC_PXX_SYSFS="$T/nosys" UC_PXX_IW="$T/iw" UC_PXX_DMESG="cat $T/dmesg" UC_PXX_FW_WAIT=0 sh "$P" "$@"
+}
+out=$(fwd boot 2>&1)
+eq "$(cat "$T/dest2/brcm/brcmfmac43456-sdio.bin")/$(cat "$T/dest2/brcm/brcmfmac43456-sdio.txt")/$(cat "$T/dest2/brcm/BCM4345C5.hcd")" \
+	"wifi-d/nvram-d/bt-d" "the three files come from /data/uc-pxx/firmware"
+has "$out" "copied brcm/BCM4345C5.hcd (from $T/datafw)" "the source /data is logged"
+rm -rf "$T/dest2"; mkdir -p "$T/dest2"; rm -f "$T/datafw/BCM4345C5.hcd"
+out=$(fwd boot 2>&1)
+has "$out" "firmware files missing: brcm/BCM4345C5.hcd" "a file missing on /data and no vendor partition: reported"
+eq "$(cat "$T/dest2/brcm/brcmfmac43456-sdio.bin")" "wifi-d" "the others still come from /data"
 echo "$N passed, $F failed"
 [ "$F" = 0 ]

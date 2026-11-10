@@ -57,6 +57,10 @@ jobs:
         run: busybox sh rootfs/tests/test-slot.sh
       - name: rootfs/tests/test-data-mount.sh - the service uc-pxx-lvm mounts /data by device with an exact label check (userdata, else the LVM volume)
         run: busybox sh rootfs/tests/test-data-mount.sh
+      - name: rootfs/tests/test-data-migrate.sh - the data tools of step 2 on loop devices (a privileged container without network)
+        run: |
+          printf 'FROM alpine:3.24\nRUN apk add --no-cache e2fsprogs util-linux-misc python3\n' | docker build -q -t uc-pxx-datatest -
+          docker run --rm --privileged --network none -v "$PWD:/w:ro" uc-pxx-datatest sh /w/rootfs/tests/test-data-migrate.sh
       - name: rootfs/tests/test-board.sh - the board file, the MAC address from the cfg partition and the model
         run: sh rootfs/tests/test-board.sh
       - name: rootfs/tests/test-post-update.sh - uc-pxx-post-update with stubs for the boot control tools
