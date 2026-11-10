@@ -24,7 +24,7 @@ for s in HOOK ARM; do
 	sed -e "s#/run/#$T/run/#g" -e "s#/etc/#$T/etc/#g" -e "s#/proc/cmdline#$T/cmdline#g" \
 	    -e "s#/proc/uptime#$T/uptime#g" -e "s#/proc/sys/kernel/tainted#$T/tainted#g" \
 	    -e "s#/dev/kmsg#$T/kmsg#g" -e "s#/sys/class/#$T/sys/#g" -e "s#/usr/sbin/uc-pxx-bootctl#$T/bin/uc-pxx-bootctl#g" \
-	    -e "s#/usr/sbin/uc-pxx-slot#$T/bin/uc-pxx-slot#g" \
+	    -e "s#/usr/sbin/uc-pxx-slot#$T/bin/uc-pxx-slot#g" -e "s#/proc/self/mountinfo#$T/mountinfo#g" \
 	    -e 's/^NET_WAIT_SECS=300/NET_WAIT_SECS=0/' "$src" > "$T/$s.sh"
 done
 printf '#!/bin/sh\nexec %s "$@" --file %s/sector --boot-file %s/boot.img\n' "$UC_PXX_BOOTCTL_RUN" "$T" "$T" > "$T/bin/uc-pxx-bootctl"
@@ -60,9 +60,15 @@ ubootargs() {
 	{ printf 'storagemedia=emmc androidboot.mode=normal'; for x in "$@"; do printf ' androidboot.slot_suffix=%s' "$x"; done
 	  printf ' console=ttyFIQ0\000'; } > "$T/ubootargs"
 }
-# reset: A trying {15,7,0}, B successful {14,0,1}, boot_a token tok1, U-Boot started slot A, healthy system
+# root DEV: the running root file system is DEV (179:22 = system_a, 179:23 = system_b)
+root() { printf '22 1 %s / / rw,noatime shared:1 - ext4 /dev/root rw\n' "$1" > "$T/mountinfo"; }
+mkdir -p "$T/sys/block/mmcblk0p22" "$T/sys/block/mmcblk0p23"
+echo PARTNAME=system_a > "$T/sys/block/mmcblk0p22/uevent"; echo 179:22 > "$T/sys/block/mmcblk0p22/dev"
+echo PARTNAME=system_b > "$T/sys/block/mmcblk0p23/uevent"; echo 179:23 > "$T/sys/block/mmcblk0p23/dev"
+# reset: A trying {15,7,0}, B successful {14,0,1}, boot_a token tok1, U-Boot started slot A, root system_a,
+# healthy system
 reset() {
-	mksector 15,7,0 14,0,1; mkboot tok1; ubootargs _a
+	mksector 15,7,0 14,0,1; mkboot tok1; ubootargs _a; root 179:22
 	echo 0 > "$T/tainted"
 	echo "console=ttyS2,115200n8 rdinit=/init uc-pxx.id=tok1" > "$T/cmdline"
 	rm -f "$T/run/"* "$T/etc/uc-pxx-nomark" "$T/etc/uc-pxx-build-id"; : > "$T/sshd-up"
@@ -133,10 +139,37 @@ PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
 reset; mksector 15,0,1 14,0,1; rm -f "$T/ubootargs"
 PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
 { [ $rc = 0 ] && unchanged; } && ok "a RAM boot (no slot) arms as before" || bad "arm-slot without a slot (rc $rc)"
-# the flash wrapper: the slot-B refusal comes before the lock, the marker, the arm and the dd
-gl=$(grep -n 'uc-pxx-slot 2>/dev/null)" = b' "$FLASH" | cut -d: -f1)
-fl=$(grep -n -m1 -e '^exec 9>' -e '^arm "' -e '^dd ' -e '^: > /run' "$FLASH" | cut -d: -f1)
-{ [ -n "$gl" ] && [ -n "$fl" ] && [ "$gl" -lt "$fl" ]; } && ok "the flash wrapper refuses in slot B before it changes anything" || bad "the flash wrapper's slot-B check is missing or late ($gl, $fl)"
+reset; mksector 15,0,1 14,0,1; ubootargs
+PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
+{ [ $rc = 1 ] && [ "$(ab)" = " 15 0 1 0 14 0 1 0" ] && [ ! -e "$T/run/uc-pxx-slot-a-changed" ]; } && ok "u-boot,bootargs without a slot word (uc-pxx-slot exit 2): refused, sector unchanged" || bad "arm-slot with an unreadable slot (rc $rc, $(ab))"
+reset; mksector 15,0,1 14,0,1; ubootargs _a _b
+PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
+{ [ $rc = 1 ] && [ "$(ab)" = " 15 0 1 0 14 0 1 0" ]; } && ok "two slot words: refused, sector unchanged" || bad "arm-slot with two slot words (rc $rc, $(ab))"
+reset; mksector 15,0,1 14,0,1; root 179:23
+PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
+{ [ $rc = 1 ] && [ "$(ab)" = " 15 0 1 0 14 0 1 0" ] && [ ! -e "$T/run/uc-pxx-slot-a-changed" ]; } && ok "slot A started, but the root is system_b: refused, sector unchanged" || bad "arm-slot with the root on system_b (rc $rc, $(ab))"
+reset; mksector 15,0,1 14,0,1; rm -f "$T/ubootargs"; root 179:23
+PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
+{ [ $rc = 1 ] && [ "$(ab)" = " 15 0 1 0 14 0 1 0" ]; } && ok "a RAM boot whose root is not system_a: refused" || bad "arm-slot in a RAM boot on system_b (rc $rc, $(ab))"
+reset; mksector 15,0,1 14,0,1; : > "$T/mountinfo"
+PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
+{ [ $rc = 1 ] && [ "$(ab)" = " 15 0 1 0 14 0 1 0" ]; } && ok "no root line in mountinfo: refused" || bad "arm-slot without a root line (rc $rc, $(ab))"
+reset; mksector 15,0,1 14,0,1; mv "$T/sys/block/mmcblk0p22/uevent" "$T/sys/block/mmcblk0p22/uevent.x"
+PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
+mv "$T/sys/block/mmcblk0p22/uevent.x" "$T/sys/block/mmcblk0p22/uevent"
+{ [ $rc = 1 ] && [ "$(ab)" = " 15 0 1 0 14 0 1 0" ]; } && ok "no partition named system_a: refused" || bad "arm-slot without system_a (rc $rc, $(ab))"
+reset; mksector 15,0,1 14,0,1; rm -f "$T/bin/uc-pxx-slot.x"; mv "$T/bin/uc-pxx-slot" "$T/bin/uc-pxx-slot.x"
+PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
+mv "$T/bin/uc-pxx-slot.x" "$T/bin/uc-pxx-slot"
+{ [ $rc = 1 ] && [ "$(ab)" = " 15 0 1 0 14 0 1 0" ]; } && ok "no uc-pxx-slot program: refused" || bad "arm-slot without uc-pxx-slot (rc $rc, $(ab))"
+# the flash wrapper: the same guard, before the lock, the marker, the arm and the dd
+sed -n '/^# The slot-A guard/,/^	die "the running root file system/p' "$ARM" > "$T/guard-arm"
+sed -n '/^# The slot-A guard/,/^	die "the running root file system/p' "$FLASH" > "$T/guard-flash"
+{ [ -s "$T/guard-arm" ] && cmp -s "$T/guard-arm" "$T/guard-flash"; } && ok "the flash wrapper has the same slot-A guard as uc-pxx-arm-slot" || bad "the slot-A guards of the two programs differ"
+gl=$(grep -n '^gs=$(/usr/sbin/uc-pxx-slot 2>/dev/null); grc=$?$' "$FLASH" | cut -d: -f1)
+gl2=$(grep -n '^	die "the running root file system' "$FLASH" | cut -d: -f1)
+fl=$(grep -n -m1 -e '^exec 9>' -e '^arm "' -e '^dd ' -e '^: > /run' -e '^grep -q "PARTNAME=boot_a"' "$FLASH" | cut -d: -f1)
+{ [ -n "$gl" ] && [ -n "$gl2" ] && [ -n "$fl" ] && [ "$gl" -lt "$fl" ] && [ "$gl2" -lt "$fl" ]; } && ok "the flash wrapper refuses before it changes or reads anything" || bad "the flash wrapper's guard is missing or late ($gl, $gl2, $fl)"
 reset; ( flock -n 9 && sleep 3 ) 9> "$T/run/uc-pxx-abdata.lock" & sleep 1
 mksector 15,0,1 14,0,1
 PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?; wait

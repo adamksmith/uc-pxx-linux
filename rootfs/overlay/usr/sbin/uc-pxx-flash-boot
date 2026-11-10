@@ -25,12 +25,26 @@ arm() {
 		die "slot A is not exactly {15,7,0} after arming $1"
 }
 
-# A system that runs from slot B (a mainline slot B: MAINLINE-STEP2-DESIGN §10 L5) never changes slot A
-# here: its updates go into the root file system of B, so a new kernel in boot_a would not match system_a.
-# A RAM boot (no slot) and slot A behave as before.
-if [ "$(/usr/sbin/uc-pxx-slot 2>/dev/null)" = b ]; then
-	die "the running system is slot B, do NOT change system_a or boot_a from here"
-fi
+# The slot-A guard (MAINLINE-STEP2-DESIGN §10 L5, Q-S9). This program changes slot A: boot_a, and with the
+# update the packages of the running root file system. So it runs only when U-Boot started slot A, or in a RAM
+# boot (no /proc/device-tree/chosen/u-boot,bootargs at all), and only when the running root file system is
+# system_a. A system that runs from slot B (its updates go into system_b, so a new kernel in boot_a would not
+# match system_a), a slot word that cannot be read, or a root that is not system_a: refused here, before the
+# lock, the marker and any write.
+gs=$(/usr/sbin/uc-pxx-slot 2>/dev/null); grc=$?
+case $grc:$gs in
+0:a|1:) ;;
+0:b) die "the running system is slot B, do NOT change system_a or boot_a from here";;
+*) die "the booted slot cannot be read (uc-pxx-slot exit $grc), do NOT change system_a or boot_a";;
+esac
+groot=$(awk '$5 == "/" { d = $3 } END { print d }' /proc/self/mountinfo 2>/dev/null)
+gsys=
+for gu in /sys/class/block/mmcblk*p*/uevent; do
+	[ -r "$gu" ] && grep -qx 'PARTNAME=system_a' "$gu" || continue
+	gsys=$(cat "${gu%/uevent}/dev" 2>/dev/null); break
+done
+[ -n "$groot" ] && [ "$groot" = "$gsys" ] ||
+	die "the running root file system (${groot:-unknown}) is not system_a (${gsys:-not found}), do NOT change system_a or boot_a from here"
 grep -q "PARTNAME=boot_a" /sys/class/block/mmcblk0p13/uevent || die "mmcblk0p13 is not boot_a"
 SIZE=$(stat -c %s "$IMG") || die "cannot stat $IMG"
 [ "$SIZE" -le $((64 * 1024 * 1024)) ] || die "image larger than 64 MiB"
