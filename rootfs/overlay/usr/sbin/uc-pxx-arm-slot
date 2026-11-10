@@ -5,7 +5,8 @@
 # Takes /run/uc-pxx-abdata.lock (the same lock as the flash wrapper and the boot-marking hook), creates the
 # marker /run/uc-pxx-slot-a-changed (the hook of THIS boot then never marks), arms slot A trying and proves
 # the exact state A{15,7,0}. The next boot marks A again when it is healthy.
-# Exit: 0 armed and verified | 1 refused or failed, nothing is changed by this script | 3 A/B STATE UNKNOWN.
+# Exit: 0 armed and verified | 1 refused or failed (also: the running system is slot B), nothing is changed
+# by this script | 3 A/B STATE UNKNOWN.
 set -u
 
 say() { echo "uc-pxx-arm-slot: $*" >&2; echo "uc-pxx-arm-slot: $*" > /dev/kmsg; }
@@ -16,6 +17,12 @@ unknown() {
 	exit 3
 }
 
+# A system that runs from slot B (a mainline slot B: MAINLINE-STEP2-DESIGN §10 L5) never changes slot A
+# here: its updates go into the root file system of B, so a new kernel in boot_a would not match system_a.
+# A RAM boot (no slot) and slot A behave as before.
+if [ "$(/usr/sbin/uc-pxx-slot 2>/dev/null)" = b ]; then
+	die "the running system is slot B, do NOT change system_a or boot_a from here"
+fi
 exec 9>/run/uc-pxx-abdata.lock
 i=0   # busybox flock has no -w: poll for up to 600 s
 until flock -n 9; do i=$((i + 1)); [ $i -ge 600 ] && die "could not take the A/B lock"; sleep 1; done

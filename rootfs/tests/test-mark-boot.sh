@@ -24,9 +24,13 @@ for s in HOOK ARM; do
 	sed -e "s#/run/#$T/run/#g" -e "s#/etc/#$T/etc/#g" -e "s#/proc/cmdline#$T/cmdline#g" \
 	    -e "s#/proc/uptime#$T/uptime#g" -e "s#/proc/sys/kernel/tainted#$T/tainted#g" \
 	    -e "s#/dev/kmsg#$T/kmsg#g" -e "s#/sys/class/#$T/sys/#g" -e "s#/usr/sbin/uc-pxx-bootctl#$T/bin/uc-pxx-bootctl#g" \
+	    -e "s#/usr/sbin/uc-pxx-slot#$T/bin/uc-pxx-slot#g" \
 	    -e 's/^NET_WAIT_SECS=300/NET_WAIT_SECS=0/' "$src" > "$T/$s.sh"
 done
 printf '#!/bin/sh\nexec %s "$@" --file %s/sector --boot-file %s/boot.img\n' "$UC_PXX_BOOTCTL_RUN" "$T" "$T" > "$T/bin/uc-pxx-bootctl"
+# the real uc-pxx-slot, reading $T/ubootargs (the stand-in of /proc/device-tree/chosen/u-boot,bootargs).
+# boot.img is the stand-in of the boot partition of the slot that the hook expects.
+sed "s#/proc/device-tree/chosen/u-boot,bootargs#$T/ubootargs#g" "$HERE/overlay/usr/sbin/uc-pxx-slot" > "$T/bin/uc-pxx-slot"
 printf '#!/bin/sh\necho "    inet 192.0.2.10/24"\n' > "$T/bin/ip"
 printf '#!/bin/sh\n[ -e "%s/sshd-up" ]\n' "$T" > "$T/bin/pidof"
 chmod 755 "$T"/bin/*
@@ -51,13 +55,20 @@ h = bytearray(4096); h[:8] = b"ANDROID!"; h[48:48 + len(sys.argv[2])] = sys.argv
 open(sys.argv[1], "wb").write(h)
 PY
 }
-# reset: A trying {15,7,0}, B successful {14,0,1}, boot_a token tok1, healthy system
+# ubootargs SUFFIX...: the U-Boot command line with these androidboot.slot_suffix words
+ubootargs() {
+	{ printf 'storagemedia=emmc androidboot.mode=normal'; for x in "$@"; do printf ' androidboot.slot_suffix=%s' "$x"; done
+	  printf ' console=ttyFIQ0\000'; } > "$T/ubootargs"
+}
+# reset: A trying {15,7,0}, B successful {14,0,1}, boot_a token tok1, U-Boot started slot A, healthy system
 reset() {
-	mksector 15,7,0 14,0,1; mkboot tok1
+	mksector 15,7,0 14,0,1; mkboot tok1; ubootargs _a
+	echo 0 > "$T/tainted"
 	echo "console=ttyS2,115200n8 rdinit=/init uc-pxx.id=tok1" > "$T/cmdline"
 	rm -f "$T/run/"* "$T/etc/uc-pxx-nomark" "$T/etc/uc-pxx-build-id"; : > "$T/sshd-up"
 }
 marked() { [ "$(od -An -tu1 -j8 -N3 "$T/sector" | tr -s ' ')" = " 15 0 1" ]; }
+ab() { od -An -tu1 -j8 -N8 "$T/sector" | tr -s ' '; }
 unchanged() { [ "$(od -An -tu1 -j8 -N3 "$T/sector" | tr -s ' ')" = " 15 7 0" ]; }
 hook() { PATH="$T/bin:$PATH" sh "$T/HOOK.sh" >/dev/null 2>&1; }
 
@@ -85,6 +96,29 @@ reset; ( flock -n 9 && sleep 5 ) 9> "$T/run/uc-pxx-abdata.lock" & sleep 1
 hook; rc=$?; wait
 { [ $rc = 1 ] && unchanged; } && ok "lock held by another program: no mark" || bad "marked while the lock was held (rc $rc)"
 
+echo "== the hook, both slots (MAINLINE-STEP2-DESIGN §10 L3) =="
+# B started trying after step 2, A the successful fallback; boot.img stands for boot_b
+reset; mksector 14,0,1 15,7,0; ubootargs _b; hook; rc=$?
+{ [ $rc = 0 ] && [ "$(ab)" = " 14 0 1 0 15 0 1 0" ]; } && ok "slot B started: B marked, A unchanged" || bad "slot B not marked (rc $rc, $(ab))"
+reset; mksector 14,0,1 15,7,0; ubootargs _b; mkboot tok2; hook; rc=$?
+{ [ $rc = 1 ] && [ "$(ab)" = " 14 0 1 0 15 7 0 0" ]; } && ok "slot B started, boot_b holds another token: no mark" || bad "marked B with a wrong token (rc $rc)"
+reset; rm -f "$T/ubootargs"; hook; rc=$?
+{ [ $rc = 1 ] && unchanged; } && ok "no u-boot,bootargs (a RAM boot): no mark" || bad "marked without a slot (rc $rc)"
+reset; ubootargs; hook; rc=$?
+{ [ $rc = 1 ] && unchanged; } && ok "u-boot,bootargs without androidboot.slot_suffix: no mark" || bad "marked without a slot word (rc $rc)"
+reset; ubootargs _a _a; hook; rc=$?
+{ [ $rc = 1 ] && unchanged; } && ok "two androidboot.slot_suffix words: no mark" || bad "marked with two slot words (rc $rc)"
+reset; ubootargs _c; hook; rc=$?
+{ [ $rc = 1 ] && unchanged; } && ok "androidboot.slot_suffix=_c: no mark" || bad "marked with slot _c (rc $rc)"
+reset; ubootargs _b; hook; rc=$?
+{ [ $rc = 1 ] && unchanged; } && ok "U-Boot says B, but libavb would start A: uc-pxx-bootctl refuses" || bad "marked against the A/B state (rc $rc)"
+reset; mksector 14,0,1 15,7,0; hook; rc=$?
+{ [ $rc = 1 ] && [ "$(ab)" = " 14 0 1 0 15 7 0 0" ]; } && ok "U-Boot says A, but libavb would start B: no mark" || bad "marked A while B is the pick (rc $rc)"
+reset; mksector 14,0,1 15,7,0; ubootargs _b; touch "$T/run/uc-pxx-slot-a-changed"; hook; rc=$?
+{ [ $rc = 0 ] && [ "$(ab)" = " 14 0 1 0 15 0 1 0" ]; } && ok "slot B started: the marker of slot A does not stop the mark of B" || bad "the A marker stopped B (rc $rc)"
+reset; mksector 14,0,1 15,7,0; ubootargs _b; touch "$T/run/uc-pxx-slot-b-changed"; hook; rc=$?
+{ [ $rc = 1 ] && [ "$(ab)" = " 14 0 1 0 15 7 0 0" ]; } && ok "slot B started, the marker uc-pxx-slot-b-changed: no mark" || bad "marked B with its marker present (rc $rc)"
+
 echo "== uc-pxx-arm-slot =="
 reset; mksector 15,0,1 14,0,1
 PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
@@ -93,6 +127,16 @@ reset; mksector 15,0,1 14,3,0
 PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
 { [ $rc = 1 ] && [ "$(od -An -tu1 -j8 -N8 "$T/sector" | tr -s ' ')" = " 15 0 1 0 14 3 0 0" ]; } && ok "B not successful: refused, sector unchanged" || bad "arm-slot with B trying (rc $rc)"
 grep -q '/run/uc-pxx-slot-a-changed' "$FLASH" && ok "the flash wrapper sets the same marker" || bad "the flash wrapper has another marker"
+reset; mksector 15,0,1 14,0,1; ubootargs _b
+PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
+{ [ $rc = 1 ] && [ "$(ab)" = " 15 0 1 0 14 0 1 0" ] && [ ! -e "$T/run/uc-pxx-slot-a-changed" ]; } && ok "the running system is slot B: refused before the lock and the marker, sector unchanged" || bad "arm-slot in slot B (rc $rc, $(ab))"
+reset; mksector 15,0,1 14,0,1; rm -f "$T/ubootargs"
+PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
+{ [ $rc = 0 ] && unchanged; } && ok "a RAM boot (no slot) arms as before" || bad "arm-slot without a slot (rc $rc)"
+# the flash wrapper: the slot-B refusal comes before the lock, the marker, the arm and the dd
+gl=$(grep -n 'uc-pxx-slot 2>/dev/null)" = b' "$FLASH" | cut -d: -f1)
+fl=$(grep -n -m1 -e '^exec 9>' -e '^arm "' -e '^dd ' -e '^: > /run' "$FLASH" | cut -d: -f1)
+{ [ -n "$gl" ] && [ -n "$fl" ] && [ "$gl" -lt "$fl" ]; } && ok "the flash wrapper refuses in slot B before it changes anything" || bad "the flash wrapper's slot-B check is missing or late ($gl, $fl)"
 reset; ( flock -n 9 && sleep 3 ) 9> "$T/run/uc-pxx-abdata.lock" & sleep 1
 mksector 15,0,1 14,0,1
 PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?; wait

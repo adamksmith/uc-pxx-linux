@@ -16,6 +16,7 @@ At every step at least one slot must stay bootable.
 | `uc-pxx-mark-boot` | `/etc/uc-pxx-mark-boot.sh` | Marks slot A as good after a healthy boot |
 | `uc-pxx-flash-boot` | `/usr/sbin/uc-pxx-flash-boot` | Sets slot A to "trying", writes `boot_a` and checks the data |
 | `uc-pxx-arm-slot` | `/usr/sbin/uc-pxx-arm-slot` | Sets slot A to "trying" before an update changes `system_a` or `boot_a` |
+| `uc-pxx-slot` | `/usr/sbin/uc-pxx-slot` | Prints the slot that U-Boot started (`a` or `b`), from `androidboot.slot_suffix` in `/proc/device-tree/chosen/u-boot,bootargs`. Exit 1 on a RAM boot (no such property) and on none or more than one such word. Writes nothing |
 | `uc-pxx-update-boot` | `/usr/sbin/uc-pxx-update-boot` | Package `uc-pxx-boot-tools` (tsx-aports). Puts the stock resource of `boot_b` into the image of `uc-pxx-kernel-lts` and writes `boot_a` through `uc-pxx-arm-slot` and `uc-pxx-flash-boot`. See below |
 | `uc-pxx-post-update` | `/usr/sbin/uc-pxx-post-update` | The board step of `tsx-autoupdate` after an install: checks the reviewed files, runs `uc-pxx-arm-slot` and `uc-pxx-update-boot write --yes`, and checks the A/B state. See "Kernel updates" |
 
@@ -33,7 +34,7 @@ test"). The package `uc-pxx-boot-tools` installs it.
 
 ```
 uc-pxx-bootctl status
-uc-pxx-bootctl mark-successful --expect a --token TOKEN
+uc-pxx-bootctl mark-successful --expect a|b --token TOKEN
 uc-pxx-bootctl arm-trying --slot a
 ```
 
@@ -41,8 +42,9 @@ uc-pxx-bootctl arm-trying --slot a
 - `mark-successful` sets the booted slot to "successful" (tries 0,
   successful 1). It refuses unless the booted slot is the expected slot and
   can boot. With `--token` it also refuses unless the build token in the
-  header of `boot_a` equals the token. So a RAM boot never marks the image
-  that is in `boot_a`.
+  header of the boot partition of that slot (`boot_a` for `--expect a`,
+  `boot_b` for `--expect b`) equals the token. So a RAM boot never marks the
+  image that is in a boot partition.
 - `arm-trying` sets slot A to "trying" (priority 15, tries 7, successful 0).
   It requires slot B to be "successful" with priority 1 to 14.
 - No command changes the bytes of slot B.
@@ -72,8 +74,10 @@ in this order and stops at the first one that fails:
 5. Stop when the kernel has an oops (taint bit 7).
 6. Take the lock `/run/uc-pxx-abdata.lock` without waiting. Stop when the
    flash wrapper or `uc-pxx-arm-slot` holds it, or when
-   `/run/uc-pxx-slot-a-changed` exists.
-7. Run `uc-pxx-bootctl mark-successful --expect a --token <build token>`.
+   `/run/uc-pxx-slot-<slot>-changed` exists for the booted slot.
+7. Run `uc-pxx-bootctl mark-successful --expect <slot> --token <build
+   token>`. The slot is the one that U-Boot started (`uc-pxx-slot`). Without
+   it (a RAM boot) the hook stops before step 3 and marks nothing.
    On exit status 3 the hook lights the red status LED.
 
 A boot that the hook does not mark stays "trying". It uses up its tries, and
@@ -286,9 +290,10 @@ to write sector 49156.
 
 ## RAM boots
 
-A RAM boot (`fastboot boot`) runs the hook too. When slot A is already
-successful, the hook logs "boot marked successful (or already was)" even
-for a foreign token. `uc-pxx-bootctl` writes nothing in this case.
+A RAM boot (`fastboot boot`) runs the hook too. U-Boot passes no device
+tree to a RAM boot, so `/proc/device-tree/chosen/u-boot,bootargs` is missing,
+`uc-pxx-slot` finds no slot, and the hook stops: "no booted slot ..., NOT
+marking". It never runs `uc-pxx-bootctl`.
 
 ## Off switches
 
@@ -297,7 +302,8 @@ for a foreign token. `uc-pxx-bootctl` writes nothing in this case.
 | `uc-pxx.nomark` on the kernel command line | The hook does not mark the boot. The slot stays as it is |
 | The file `/etc/uc-pxx-nomark` | The same, for development and test images |
 | A missing `uc-pxx.id=` word on the kernel command line | The hook does not mark the boot |
-| The marker `/run/uc-pxx-slot-a-changed` | The hook does not mark the boot (set by the flash wrapper and `uc-pxx-arm-slot`) |
+| The marker `/run/uc-pxx-slot-a-changed` | The hook does not mark slot A (set by the flash wrapper and `uc-pxx-arm-slot`) |
+| No `androidboot.slot_suffix` in `/proc/device-tree/chosen/u-boot,bootargs` | The hook does not mark the boot (a RAM boot) |
 | `rc-update del uc-pxx-boot-ok default` | The service does not start |
 
 Use a switch on every image that does not come from the image builder.
@@ -357,4 +363,9 @@ checksums before they write the metadata sector on a panel.
 - Every change to `system_a` or `boot_a` must arm slot A first.
 - The hook must not run while the flash wrapper runs.
 - The hook must not mark a boot after a kernel oops.
-- Phase 2 needs the tool for both slots. See [boot.md](boot.md).
+- Phase 2 needs the tool for both slots. See [boot.md](boot.md). The mark
+  works for both slots (`--expect a|b`, the token of `boot_a` or `boot_b`);
+  `arm-trying` and the updaters are for slot A only, and `uc-pxx-arm-slot`
+  and `uc-pxx-flash-boot` refuse when the running system is slot B (its
+  updates go into `system_b`, so a new kernel in `boot_a` would not match
+  `system_a`).

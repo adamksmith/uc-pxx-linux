@@ -1,0 +1,26 @@
+#!/bin/sh
+# uc-pxx-slot: print the slot that U-Boot started, "a" or "b".
+#
+# The source is the word androidboot.slot_suffix=_a or _b of the U-Boot
+# command line. The shim copies that command line into the device tree
+# property /chosen/u-boot,bootargs (docs/boot.md "What U-Boot passes to the
+# kernel"). The kernel command line itself does not have the word: it comes
+# from the device tree of the boot image.
+#
+# Exit 0: the slot is printed. Exit 1: nothing is printed, because
+#   - the property is missing (a RAM boot by `fastboot boot`: U-Boot passes
+#     no device tree), or
+#   - the property has no androidboot.slot_suffix word, more than one, or a
+#     value other than _a and _b.
+# The program reads only this property. It writes nothing. The initramfs, the
+# boot-marking hook and the slot-A updaters use it (MAINLINE-STEP2-DESIGN §10).
+set -u
+P=/proc/device-tree/chosen/u-boot,bootargs
+[ -r "$P" ] || exit 1
+# the property is a NUL-terminated string; one word on each line
+s=$(tr '\000\t' '  ' < "$P" | tr -s ' ' '\n' | sed -n 's/^androidboot\.slot_suffix=//p')
+case $s in
+	_a) echo a ;;
+	_b) echo b ;;
+	*) exit 1 ;;
+esac

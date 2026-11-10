@@ -2,13 +2,16 @@
 # Mark this slot's boot successful once the system has been healthy for a while, like Android's
 # update_verifier + boot_control markBootSuccessful(). Until then the slot stays "trying", so a bad image
 # keeps using up its tries and U-Boot falls back to the other slot.
-# Started in the background by /etc/init.d/uc-pxx-boot-ok. The mainline image only ever lives in boot_a, so it expects slot A.
+# Started in the background by /etc/init.d/uc-pxx-boot-ok. It marks only the slot that U-Boot started
+# (uc-pxx-slot: androidboot.slot_suffix of the U-Boot command line), slot A or slot B. Without that word (a
+# `fastboot boot` RAM boot has none) it marks nothing.
 #
 # Off switches: kernel cmdline "uc-pxx.nomark", or the file /etc/uc-pxx-nomark (dev/test images).
 # Image identity: the word uc-pxx.id=TOKEN on the kernel command line (kernel/mkimage.sh puts it into the
-# device tree of the boot image) must equal the name field of the boot_a header, so a `fastboot boot`
-# RAM boot never blesses whatever happens to be in boot_a. The token comes ONLY from /proc/cmdline, never
-# from a file of the root file system (system_a is not part of the running image).
+# device tree of the boot image) must equal the name field of the header of the booted slot's boot
+# partition (boot_a or boot_b), so a `fastboot boot` RAM boot never blesses whatever happens to be there.
+# The token comes ONLY from /proc/cmdline, never from a file of the root file system (the root file system
+# is not part of the running image).
 
 HEALTH_SECS=60
 NET_WAIT_SECS=300
@@ -28,6 +31,10 @@ done
 set +f
 if [ -z "$TOKEN" ]; then
 	log "no uc-pxx.id= on the kernel command line, NOT marking"
+	exit 1
+fi
+if ! SLOT=$(/usr/sbin/uc-pxx-slot); then
+	log "no booted slot (no androidboot.slot_suffix in /proc/device-tree/chosen/u-boot,bootargs: a RAM boot?), NOT marking"
 	exit 1
 fi
 
@@ -58,17 +65,17 @@ fi
 
 # F1: never race the flash wrapper or uc-pxx-arm-slot. They hold this lock while they arm slot A, and they
 # leave /run/uc-pxx-slot-a-changed behind: once boot_a or system_a has been changed under this running
-# image, this (old) image must never mark anything.
+# image, this (old) image must never mark slot A. The marker of the booted slot is the one that counts.
 exec 9>/run/uc-pxx-abdata.lock
 if ! flock -n 9; then
 	log "A/B lock busy (flash in progress), NOT marking"
 	exit 1
 fi
-if [ -e /run/uc-pxx-slot-a-changed ]; then
-	log "slot A was changed during this boot, NOT marking"
+if [ -e "/run/uc-pxx-slot-$SLOT-changed" ]; then
+	log "slot $SLOT was changed during this boot, NOT marking"
 	exit 1
 fi
-/usr/sbin/uc-pxx-bootctl mark-successful --expect a --token "$TOKEN"
+/usr/sbin/uc-pxx-bootctl mark-successful --expect "$SLOT" --token "$TOKEN"
 rc=$?
 flock -u 9
 case $rc in

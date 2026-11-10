@@ -4,8 +4,9 @@
  * mark-successful: what Android's boot_control markBootSuccessful() / libavb avb_ab_mark_slot_successful()
  *   does — on a healthy boot set the booted slot to successful (tries_remaining=0, successful_boot=1),
  *   priority untouched. Refuses unless the booted slot is the expected one AND currently bootable, and
- *   (with --token) unless boot_a holds the very image that is running (so a `fastboot boot` RAM boot can
- *   never bless whatever happens to be in boot_a).
+ *   (with --token) unless the boot partition of the expected slot (boot_a for --expect a, boot_b for
+ *   --expect b) holds the very image that is running (so a `fastboot boot` RAM boot can never bless
+ *   whatever happens to be in that boot partition).
  * arm-trying: re-arm slot A to "trying" {15,7,0} before flashing boot_a, so a bad new image runs down
  *   its tries and U-Boot falls back to slot B. Requires slot B successful (priority 1..14) and leaves it
  *   byte-identical.
@@ -23,7 +24,8 @@
  *   uc-pxx-bootctl mark-successful   --expect a|b [--token TOKEN] [--dry-run] [--file PATH]
  *   uc-pxx-bootctl arm-trying        --slot a [--dry-run] [--file PATH]
  * --file operates on a 512-byte sector image instead of the eMMC (testing; skips device checks;
- *   --token is then compared against the file given by --boot-file, default none = refuse).
+ *   --token is then compared against the file given by --boot-file (the stand-in for the boot
+ *   partition of the expected slot), default none = refuse).
  * Exit: 0 = done / nothing to do
  *       1 = refused, on-disk state unchanged
  *       2 = I/O error, but the on-disk sector was verified to be the original (unchanged or restored)
@@ -47,6 +49,8 @@
 #define MISC_SYSFS   EMMC_SYSFS "/mmcblk0p5"
 #define BOOTA_SYSFS  EMMC_SYSFS "/mmcblk0p13"
 #define BOOTA_DEV    "/dev/mmcblk0p13"
+#define BOOTB_SYSFS  EMMC_SYSFS "/mmcblk0p14"
+#define BOOTB_DEV    "/dev/mmcblk0p14"
 #define MISC_START   49152ULL
 #define AB_LBA       49156ULL
 #define SECTOR       512
@@ -56,7 +60,7 @@
 enum { RC_OK = 0, RC_REFUSED = 1, RC_IO_UNCHANGED = 2, RC_UNKNOWN = 3 };
 
 static const char *file_path;  /* NULL = real eMMC */
-static const char *boot_file;  /* test stand-in for boot_a when --file is used */
+static const char *boot_file;  /* test stand-in for the boot partition of the expected slot when --file is used */
 
 static void logmsg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void logmsg(const char *fmt, ...)
@@ -178,8 +182,9 @@ static int same_dev(const char *node, const char *sysfs_dir)
 	return major(st.st_rdev) == maj && minor(st.st_rdev) == min;
 }
 
-/* /dev/mmcblk0 must be the eMMC whose p5 is "misc" at 49152 (and p13 "boot_a" when needed) */
-static const char *check_device(int need_boota)
+/* /dev/mmcblk0 must be the eMMC whose p5 is "misc" at 49152 (and, when need_boot is 0 or 1, p13
+   "boot_a" or p14 "boot_b": the boot partition of the slot to mark) */
+static const char *check_device(int need_boot)
 {
 	char buf[256];
 
@@ -193,11 +198,17 @@ static const char *check_device(int need_boota)
 		return "misc does not start at 49152";
 	if (!same_dev(EMMC_DEV, EMMC_SYSFS))
 		return EMMC_DEV " is not the device sysfs calls mmcblk0";
-	if (need_boota) {
+	if (need_boot == 0) {
 		if (read_text(BOOTA_SYSFS "/uevent", buf, sizeof(buf)) || !strstr(buf, "PARTNAME=boot_a\n"))
 			return "mmcblk0p13 is not 'boot_a'";
 		if (!same_dev(BOOTA_DEV, BOOTA_SYSFS))
 			return BOOTA_DEV " is not the device sysfs calls mmcblk0p13";
+	}
+	if (need_boot == 1) {
+		if (read_text(BOOTB_SYSFS "/uevent", buf, sizeof(buf)) || !strstr(buf, "PARTNAME=boot_b\n"))
+			return "mmcblk0p14 is not 'boot_b'";
+		if (!same_dev(BOOTB_DEV, BOOTB_SYSFS))
+			return BOOTB_DEV " is not the device sysfs calls mmcblk0p14";
 	}
 	return NULL;
 }
@@ -302,10 +313,11 @@ static int commit(const uint8_t *cur, const uint8_t *next)
 	return RC_UNKNOWN;
 }
 
-/* the running image's token must equal the name field of the boot_a header */
-static int token_matches(const char *token)
+/* the running image's token must equal the name field of the header of boot_a (slot 0) or boot_b (slot 1) */
+static int token_matches(const char *token, int slot)
 {
-	const char *path = boot_file ? boot_file : (file_path ? NULL : BOOTA_DEV);
+	const char *dev = slot == 0 ? BOOTA_DEV : slot == 1 ? BOOTB_DEV : NULL;
+	const char *path = boot_file ? boot_file : (file_path ? NULL : dev);
 	char want[TOKEN_LEN + 1] = { 0 }, have[TOKEN_LEN + 1] = { 0 };
 	uint8_t hdr[64];
 	int fd, ok;
@@ -383,7 +395,7 @@ int main(int argc, char **argv)
 	if (!mark && !arm && strcmp(cmd, "status"))
 		return usage();
 
-	if (!file_path && (why = check_device(mark && token))) {
+	if (!file_path && (why = check_device(mark && token ? expect : -1))) {
 		logmsg("refusing: %s", why);
 		return RC_REFUSED;
 	}
@@ -424,8 +436,8 @@ int main(int argc, char **argv)
 			logmsg("slot %c already successful, nothing to do", "ab"[expect]);
 			return RC_OK;
 		}
-		if (token && !token_matches(token)) {
-			logmsg("refusing: boot_a does not hold the running image (token %s); RAM boot?", token);
+		if (token && !token_matches(token, expect)) {
+			logmsg("refusing: boot_%c does not hold the running image (token %s); RAM boot?", "ab"[expect], token);
 			return RC_REFUSED;
 		}
 		if (!token) {

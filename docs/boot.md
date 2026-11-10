@@ -172,9 +172,14 @@ initramfs` makes it as the uncompressed cpio archive
 `/init` does these steps:
 
 1. Mount `/proc`, `/sys`, `/dev` and a tmpfs on `/run`.
-2. Find the root partition: the partition with the GPT name `system_a`. If
-   no partition has this name, the eMMC partition with the label `tsxroot`.
-   Wait up to 15 seconds for it.
+2. Find the root partition of the slot that U-Boot started:
+   `uc-pxx-slot` reads the word `androidboot.slot_suffix=_a` or `_b` of
+   `/proc/device-tree/chosen/u-boot,bootargs`, and the root partition is the
+   one with the GPT name `system_a` or `system_b`. A RAM boot has no such
+   word: then `system_a`, as before. If no partition has the name, the eMMC
+   partition with the label `tsxroot`, but only when exactly one partition
+   has that label (with mainline in both slots, both have it). Wait up to 15
+   seconds for it.
 3. Stop with the rescue system if the partition does not hold an ext4 file
    system with the label `tsxroot`. The script never checks, grows or mounts
    another file system.

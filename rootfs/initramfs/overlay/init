@@ -2,15 +2,19 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # PID 1 of the uc-pxx boot initramfs. The initramfs is built into the kernel
 # Image (ci/build-kernel.sh --initramfs). This script finds the root file
-# system of slot A, checks it, grows it to fill system_a, mounts it and runs
-# switch_root into it. On any failure it starts the rescue system: busybox
+# system of the slot that U-Boot started (A or B), checks it, grows it to fill
+# its partition, mounts it and runs switch_root into it. On any failure it starts the rescue system: busybox
 # init with the rescue screen on the LCD (tsx-rescue-status), a shell on the
 # serial console (ttyS2, 115200) and, when the switch init works, eth0 with
 # DHCP and dropbear (the login of tsx-rescue-login).
 #
-# The root file system: the partition named system_a (GPT name) with an ext4
-# file system labeled tsxroot. If no partition has the name system_a, the
-# first partition of the eMMC with the label tsxroot. The script checks,
+# The root file system: the partition named system_a or system_b (GPT name)
+# with an ext4 file system labeled tsxroot. The slot is the word
+# androidboot.slot_suffix of the U-Boot command line (uc-pxx-slot, from
+# /proc/device-tree/chosen/u-boot,bootargs). A boot without it (a RAM boot by
+# `fastboot boot`) uses system_a, as before. If no partition has that name, the
+# one partition of the eMMC with the label tsxroot, and only when exactly one
+# has it (after step 2 both system_a and system_b have it). The script checks,
 # grows or mounts only a file system with the label tsxroot.
 #
 # The script never writes the A/B metadata, a boot partition or the partition
@@ -176,11 +180,17 @@ part_by_name() {
 label_of() { blkid "$1" 2>/dev/null | sed -n 's/.* LABEL="\([^"]*\)".*/\1/p'; }
 type_of() { blkid "$1" 2>/dev/null | sed -n 's/.* TYPE="\([^"]*\)".*/\1/p'; }
 
+# The slot that U-Boot started: a or b. Nothing for a RAM boot.
+slot=$(/usr/sbin/uc-pxx-slot 2>/dev/null) || slot=
+rootname=system_${slot:-a}
+msg "booted slot ${slot:-none (no androidboot.slot_suffix: a RAM boot?)}, root partition $rootname"
+
 # find_root: the device of the root file system, or nothing
 find_root() {
-	if d=$(part_by_name system_a); then
+	if d=$(part_by_name "$rootname"); then
 		[ -b "$d" ] && { echo "$d"; return 0; }
 	fi
+	[ "$(blkid 2>/dev/null | grep -c ' LABEL="tsxroot"')" = 1 ] || return 1
 	d=$(findfs LABEL=tsxroot 2>/dev/null) || return 1
 	case $d in /dev/mmcblk*p*) echo "$d"; return 0;; esac
 	return 1
@@ -194,7 +204,7 @@ while :; do
 	[ "$(up)" -ge "$end" ] && break
 	sleep 0.25
 done
-[ -n "$dev" ] || rescue "no root partition: no system_a and no LABEL=tsxroot on the eMMC within ${wait}s"
+[ -n "$dev" ] || rescue "no root partition: no $rootname and no single LABEL=tsxroot on the eMMC within ${wait}s"
 lab=$(label_of "$dev") typ=$(type_of "$dev")
 msg "root partition $dev (label '${lab:-none}', type '${typ:-none}')"
 [ "$lab" = tsxroot ] && [ "$typ" = ext4 ] ||
@@ -213,7 +223,7 @@ fi
 msg "e2fsck code $rc"
 
 # Grow the file system to fill its partition when the partition is more than
-# 64 MiB larger (a compact rootfs.ext4 written into system_a).
+# 64 MiB larger (a compact rootfs.ext4 written into system_a or system_b).
 psz=$(cat "/sys/class/block/${dev##*/}/size" 2>/dev/null)
 set -- $(dumpe2fs -h "$dev" 2>/dev/null | sed -n 's/^Block count: *//p; s/^Block size: *//p')
 if [ -n "$psz" ] && [ $# = 2 ]; then
@@ -253,5 +263,5 @@ for m in /dev /proc /sys /run; do
 done
 # switch_root runs as PID 1 and must be the last command. If it fails, PID 1
 # ends and the kernel restarts the unit after the panic timeout (panic=30 on
-# the command line). That boot then counts as a failed try of slot A.
+# the command line). That boot then counts as a failed try of the slot.
 exec switch_root /newroot "$init"

@@ -206,5 +206,48 @@ for boot, tok, label in ((bytes(4096), TOKEN, "boot file not ANDROID!"),
     fails += not ok
     print(f"{'PASS' if ok else 'FAIL'} token: {label}")
 
+# --expect b (the both-slot build, MAINLINE-STEP2-DESIGN §10 L4): the same rules with the slots swapped,
+# and the token is compared with the stand-in of boot_b. Checked here by an independent model.
+def expect_mark_b(before, rc, after, token_ok=True):
+    B = before[12:16]
+    if not valid(before) or pick(before) != 1 or not bootable(B):
+        return rc == 1 and after == before, "refuse, untouched (invalid / libavb would not boot B / B unbootable)"
+    if B[2] == 1:
+        return rc == 0 and after == before, "already successful: no change"
+    if not token_ok:
+        return rc == 1 and after == before, "token mismatch: refuse, untouched"
+    good = (rc == 0 and valid(after) and after[12:16] == bytes([B[0], 0, 1, 0])
+            and after[8:12] == before[8:12] and only_changed(before, after, (13, 14, 28, 29, 30, 31)))
+    return good, "B->{prio,0,1,0}, A untouched, only bytes 13,14,28-31 changed"
+
+
+synth_b = dict(synth)
+synth_b.update({
+    "B trying 7, A successful 14 (step 2 first boot of B)": mk(A=[14, 0, 1, 0], B=[15, 7, 0, 0]),
+    "B trying 1, A successful 14": mk(A=[14, 0, 1, 0], B=[15, 1, 0, 0]),
+    "B successful 15, A successful 14": mk(A=[14, 0, 1, 0], B=[15, 0, 1, 0]),
+    "B trying 14 below A successful 15": mk(A=[15, 0, 1, 0], B=[14, 7, 0, 0]),
+    "B trying 15, A retired": mk(A=[0, 0, 0, 0], B=[15, 7, 0, 0]),
+    "B trying tie 15/15": mk(A=[15, 0, 1, 0], B=[15, 7, 0, 0]),
+    "B exhausted {15,0,0}, A successful 14": mk(A=[14, 0, 1, 0], B=[15, 0, 0, 0]),
+})
+for name, s in list(synth_b.items()) + [(os.path.basename(f), s) for f, s in files]:
+    for boot, tok_ok in ((bootimg(TOKEN), True), (bootimg("ucpxx-other"), False)):
+        rc, after, err = run(s, "mark-successful", "--expect", "b", "--token", TOKEN, boot=boot)
+        ok, rule = expect_mark_b(s, rc, after, token_ok=tok_ok)
+        fails += not ok
+        print(f"{'PASS' if ok else 'FAIL'} markb {name:38s} token {'ok ' if tok_ok else 'bad'} A{tuple(s[8:11])} "
+              f"B{tuple(s[12:15])} rc={rc} -> A{tuple(after[8:11])} B{tuple(after[12:15])}  [{rule}]")
+        if not ok:
+            print("     stderr:", err)
+    rc, after, _ = run(s, "mark-successful", "--expect", "b", boot=bootimg(TOKEN))   # no --token
+    ok = after == s and (rc == 1 or (rc == 0 and s[14] == 1 and valid(s) and pick(s) == 1))
+    fails += not ok
+    if not ok:
+        print(f"FAIL markb-no-token {name}: rc={rc}")
+    rc, after, _ = run(s, "mark-successful", "--expect", "b", "--token", TOKEN, "--dry-run", boot=bootimg(TOKEN))
+    if after != s:
+        print(f"FAIL markb dry-run modified {name}"); fails += 1
+
 print("\nRESULT:", "ALL PASS" if not fails else f"{fails} FAILURES")
 sys.exit(1 if fails else 0)

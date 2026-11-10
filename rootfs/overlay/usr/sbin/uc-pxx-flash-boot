@@ -25,6 +25,12 @@ arm() {
 		die "slot A is not exactly {15,7,0} after arming $1"
 }
 
+# A system that runs from slot B (a mainline slot B: MAINLINE-STEP2-DESIGN §10 L5) never changes slot A
+# here: its updates go into the root file system of B, so a new kernel in boot_a would not match system_a.
+# A RAM boot (no slot) and slot A behave as before.
+if [ "$(/usr/sbin/uc-pxx-slot 2>/dev/null)" = b ]; then
+	die "the running system is slot B, do NOT change system_a or boot_a from here"
+fi
 grep -q "PARTNAME=boot_a" /sys/class/block/mmcblk0p13/uevent || die "mmcblk0p13 is not boot_a"
 SIZE=$(stat -c %s "$IMG") || die "cannot stat $IMG"
 [ "$SIZE" -le $((64 * 1024 * 1024)) ] || die "image larger than 64 MiB"

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Runs INSIDE an aarch64 Alpine container (see ../build-rootfs.sh initramfs),
 # with the repository at /w. It builds the uc-pxx boot initramfs: /init (the
-# switch_root to the root file system of slot A) and the rescue system that
+# switch_root to the root file system of the booted slot) and the rescue system that
 # /init falls back to (docs/boot.md "The boot initramfs").
 #
 #   mkinitramfs.sh OUT.cpio
@@ -76,6 +76,7 @@ install -D -m 644 /w/rootfs/overlay/usr/local/lib/tsx/board.sh $R/usr/local/lib/
 install -D -m 755 "$UC_PXX_BOOTCTL" $R/usr/sbin/uc-pxx-bootctl
 install -D -m 755 "$UC_PXX_REBOOT" $R/usr/libexec/uc-pxx-reboot-syscall
 install -D -m 755 /w/rootfs/overlay/usr/sbin/uc-pxx-reboot $R/usr/sbin/uc-pxx-reboot
+install -D -m 755 /w/rootfs/overlay/usr/sbin/uc-pxx-slot $R/usr/sbin/uc-pxx-slot
 # the watcher of Volume down + Mute (the rescue runs it with --rescue, inittab)
 install -D -m 755 /w/rootfs/overlay/usr/local/sbin/uc-pxx-loader-key $R/usr/local/sbin/uc-pxx-loader-key
 [ "$(sha256sum $R/usr/sbin/uc-pxx-bootctl | cut -d' ' -f1)" = "$BOOTCTL_SHA256" ] || { echo "mkinitramfs.sh: uc-pxx-bootctl changed in the copy"; exit 1; }
@@ -151,7 +152,7 @@ fi
 for f in /sbin/init /sbin/switch_root /sbin/findfs /sbin/blkid /sbin/e2fsck /usr/sbin/resize2fs /usr/sbin/dumpe2fs \
 	/usr/sbin/dropbear /usr/share/udhcpc/default.script /usr/sbin/tsx-rescue-status /usr/sbin/tsx-rescue-login \
 	/usr/sbin/tsx-rescue-backlight /usr/sbin/tsx-confont /usr/sbin/tsx-data-backup /usr/sbin/uc-pxx-install-rootfs \
-	/usr/sbin/uc-pxx-bootctl /usr/sbin/uc-pxx-reboot /usr/libexec/uc-pxx-reboot-syscall /usr/bin/evtest /usr/share/tsx/consolefonts/ter-132b.psf /usr/local/lib/tsx/board.sh; do
+	/usr/sbin/uc-pxx-bootctl /usr/sbin/uc-pxx-reboot /usr/sbin/uc-pxx-slot /usr/libexec/uc-pxx-reboot-syscall /usr/bin/evtest /usr/share/tsx/consolefonts/ter-132b.psf /usr/local/lib/tsx/board.sh; do
 	[ -e "$R$f" ] || { echo "mkinitramfs.sh: $f is missing in the initramfs"; exit 1; }
 done
 echo uc-pxx-rescue > $R/etc/hostname
