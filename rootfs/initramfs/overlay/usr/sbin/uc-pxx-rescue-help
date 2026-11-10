@@ -5,9 +5,14 @@
 # screen is tsx-rescue-status), the shell on ttyS2 and every ssh login.
 echo "UC-P10 rescue system ($(uname -r))"
 [ -r /run/rescue-reason ] && echo "why: $(cat /run/rescue-reason)"
+s=$(/usr/sbin/uc-pxx-slot 2>/dev/null)
+case $s in
+a|b) echo "booted slot: $(echo "$s" | tr a-z A-Z). The tools act on its root partition system_$s and on /data (userdata)";;
+*) echo "booted slot: none (a RAM boot). uc-pxx-install-rootfs refuses; the data tools see only /data (userdata)";;
+esac
 echo "  tsx-rescue-status once    show the rescue screen as text"
 echo "  uc-pxx-bootctl status     show the A/B state (read only: never mark or arm here)"
-echo "  uc-pxx-install-rootfs     write a rootfs.ext4 into system_a (see --help)"
+echo "  uc-pxx-install-rootfs     write a rootfs.ext4 into the root partition of the booted slot (see --help)"
 echo "  tsx-data-backup           back up the panel data (see --help)"
 echo "  tsx-data-restore          put a backup back (see --help)"
 echo "  uc-pxx-reboot loader      restart into the loader (download, rockusb) mode. Writes nothing."
@@ -17,4 +22,4 @@ echo "  uc-pxx-reboot fastboot    restart into the fastboot mode of U-Boot. Writ
 echo "                            A power cycle leaves both modes"
 echo "  reboot -f                 boot again (the root file system, if it is there)"
 echo "The rescue writes nothing else: boot_a is written on the running system"
-echo "with uc-pxx-flash-boot."
+echo "with uc-pxx-flash-boot (slot A only)."

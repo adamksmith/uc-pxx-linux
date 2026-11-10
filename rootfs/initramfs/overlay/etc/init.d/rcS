@@ -3,8 +3,10 @@
 # The rescue system of the uc-pxx boot initramfs (busybox init runs this
 # script once). It runs from RAM and writes nothing to the eMMC. It reads only
 # the six MAC bytes of the cfg partition, and (read only) the login data of the
-# root file system. uc-pxx-install-rootfs and tsx-data-restore write to system_a
-# only when a person starts them.
+# root file system of the booted slot and of /data on userdata. Only when a
+# person starts them, uc-pxx-install-rootfs writes the root partition of the
+# booted slot (system_a or system_b) and tsx-data-restore writes /data on
+# userdata or that root file system (MAINLINE-STEP2-DESIGN review F9).
 #
 # Steps:
 #   1. Set the backlight (tsx-rescue-backlight, in the background).
@@ -16,8 +18,8 @@
 #      (rtl8363-init init) while eth0 is down, bring eth0 up and get an
 #      address with DHCP.
 # The rescue screen (tsx-rescue-status, started by inittab on tty1) shows the
-# result. The rescue never marks the boot as good. Slot A stays "trying", so the
-# unit falls back to slot B when the tries run out.
+# result. The rescue never marks the boot as good. A trying slot stays
+# "trying", so the unit falls back to the other slot when the tries run out.
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 log() {
 	echo "uc-pxx-rescue: $*" > /dev/kmsg 2>/dev/null
@@ -40,9 +42,11 @@ log "shell on ttyS2 (115200). Log: /run/uc-pxx-initramfs.log, /run/uc-pxx-rescue
 # ssh key of the panel from the root file system, or makes a one-time password
 # that only the rescue screen shows. Dropbear starts after it, so there is no
 # moment with a login that nobody chose. The log line never has the password.
-# The root file system is on the eMMC already, so the script does not wait
-# for a data partition (the unit has none).
-TSX_RESCUE_WAIT=0 /usr/sbin/tsx-rescue-login
+# The file systems are on the eMMC already, so the script does not wait for a
+# data partition. uc-pxx-findfs finds them by GPT name: the root file system
+# of the booted slot (none in a RAM boot) and /data on userdata. Never a file
+# system by its label alone (two slots have the same labels).
+TSX_RESCUE_WAIT=0 TSX_RESCUE_FINDFS=/usr/sbin/uc-pxx-findfs /usr/sbin/tsx-rescue-login
 log "rescue login: $(cat /run/tsx-rescue-login 2>/dev/null || echo failed)"
 mkdir -p /etc/dropbear
 case $(cat /run/tsx-rescue-login 2>/dev/null) in

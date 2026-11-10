@@ -238,10 +238,15 @@ device tree) and the MAC address (from the `cfg` partition, bytes 6 to 11).
   `rtl8363-init`, DHCP on eth0.
 - SSH with dropbear on port 22. `tsx-rescue-login` chooses the login at each
   rescue boot:
-  1. The login of the panel. It reads `data/tsx/panel.conf` and
-     `root/.ssh/authorized_keys` of the root file system (label `tsxroot`,
-     read only). The key of root becomes the key of the rescue. A
-     `ROOT_PASSWORD_HASH` in `panel.conf` becomes the password of root.
+  1. The login of the panel. It reads `tsx/panel.conf` of `/data` on
+     `userdata`, and `data/tsx/panel.conf` and `root/.ssh/authorized_keys` of
+     the root file system of the booted slot (read only). `uc-pxx-findfs`
+     finds both by GPT name: `system_a` or `system_b` (the booted slot; none
+     in a RAM boot) and `userdata` (only with ext4 label `tsxdata`). It never
+     takes a file system by its label alone: with mainline in both slots, both
+     root file systems have the label `tsxroot`. The key of root becomes the
+     key of the rescue. A `ROOT_PASSWORD_HASH` in `panel.conf` becomes the
+     password of root.
   2. A one-time password, if the root file system has no key and no hash.
      Only the rescue screen shows it. It is not in the log.
   3. Test builds only: the password hash or the key that the build baked in
@@ -254,20 +259,26 @@ The tools in the rescue:
 
 | Tool | Task |
 |---|---|
-| `uc-pxx-install-rootfs` | Writes a `rootfs.ext4` into `system_a` (`mmcblk0p22`, GPT name `system_a`). Nothing else |
-| `tsx-data-backup`, `tsx-data-restore` | Back up and restore the panel data. The unit has no data partition, so it works on the root file system (`/data`, `/root`, `/home`, `/var/lib/...`) |
+| `uc-pxx-install-rootfs` | Writes a `rootfs.ext4` into the root partition of the booted slot: `system_a` (`mmcblk0p22`) in a boot of slot A, `system_b` (`mmcblk0p23`) in a boot of slot B. A RAM boot: it refuses. Nothing else |
+| `tsx-data-backup`, `tsx-data-restore` | Back up and restore the panel data: `/data` on `userdata` (ext4 `tsxdata`, both slots), else the root file system of the booted slot (`/data`, `/root`, `/home`, `/var/lib/...`). The tools of tsx-linux-common, run by a wrapper with `uc-pxx-findfs` (the file systems by GPT name). A RAM boot without `/data` on `userdata`: they refuse |
 | `uc-pxx-bootctl status` | Shows the A/B state |
 | `uc-pxx-reboot loader` | Restarts into the loader (download) mode. See "The loader mode" |
 | `uc-pxx-reboot fastboot` | Restarts into the fastboot mode of U-Boot. See "Restart into a U-Boot mode" |
 
 `uc-pxx-install-rootfs` does a preflight first and stops at the first
-failed check: the partition is `mmcblk0p22`, on the eMMC, exactly 1792 MiB,
-not mounted, and slot B is successful with priority 1 to 14. It writes the
-image, reads it back and compares the sha256 value, checks the label
-`tsxroot`, runs `e2fsck` and grows the file system. The progress shows MiB,
-percent, rate and the time left. The rescue does not write `boot_a`, the A/B
-metadata (misc LBA 49156), the idbloader or the partition table. Write
-`boot_a` on the running system with `uc-pxx-flash-boot`.
+failed check: the booted slot is A or B (`uc-pxx-slot`); its root partition
+is `mmcblk0p22` (`system_a`) or `mmcblk0p23` (`system_b`), on the eMMC,
+exactly 1792 MiB, not mounted; and the other slot is successful with priority
+1 to 14 (the fallback). It writes the image, reads it back and compares the
+sha256 value, checks the label `tsxroot`, runs `e2fsck` and grows the file
+system. The progress shows MiB, percent, rate and the time left. The rescue
+does not write `boot_a` or `boot_b`, the A/B metadata (misc LBA 49156), the
+idbloader or the partition table. Write `boot_a` on the running system of
+slot A with `uc-pxx-flash-boot`.
+
+`/etc/uc-pxx-force-rescue` on a root file system starts the rescue once at
+the next boot of that slot: `/init` reads and removes it on the root file
+system of the booted slot only.
 
 From a host, with the rescue address `<ip>`:
 

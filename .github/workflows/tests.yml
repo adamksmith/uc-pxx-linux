@@ -45,6 +45,8 @@ jobs:
         run: sh rootfs/tests/test-profiles.sh
       - name: rootfs/tests/test-rescue.sh - the rescue screen, console font and login with the tools of tsx-linux-common (SKIPPED without a checkout)
         run: busybox sh rootfs/tests/test-rescue.sh
+      - name: rootfs/tests/test-rescue-slot.sh - the rescue tools act on the booted slot (uc-pxx-findfs, the data tool wrapper, the login)
+        run: busybox sh rootfs/tests/test-rescue-slot.sh
       - name: rootfs/tests/test-install-rootfs.sh - uc-pxx-install-rootfs against a made-up /sys and /dev
         run: busybox sh rootfs/tests/test-install-rootfs.sh
       - name: rootfs/tests/test-loader-key.sh - Volume down + Mute for the loader mode, in the service and in /init

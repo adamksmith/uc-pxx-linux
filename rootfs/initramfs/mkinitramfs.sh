@@ -14,7 +14,9 @@
 #   TSX_COMMON       required: a checkout of tsx-linux-common. The rescue
 #                    tools come from its rescue/usr/sbin: tsx-rescue-status,
 #                    tsx-confont, tsx-rescue-backlight, tsx-rescue-login,
-#                    tsx-data-backup and tsx-data-restore
+#                    tsx-data-backup and tsx-data-restore (these two in
+#                    /usr/libexec/tsx-rescue, run by the wrapper of the
+#                    overlay with uc-pxx-findfs)
 #   UC_PXX_BOOTCTL   required: the static aarch64 uc-pxx-bootctl
 #                    (tools/uc-pxx-bootctl/build.sh). The rescue screen and
 #                    uc-pxx-install-rootfs only read the A/B state with it.
@@ -64,13 +66,23 @@ apk add --root $R --initdb --no-cache -q \
 	--repositories-file /etc/apk/repositories --keys-dir /etc/apk/keys \
 	alpine-baselayout busybox busybox-binsh dropbear e2fsprogs e2fsprogs-extra evtest
 cp -a "$HERE"/overlay/. $R/
-chmod 755 $R/init $R/etc/init.d/rcS $R/usr/sbin/uc-pxx-install-rootfs $R/usr/sbin/uc-pxx-rescue-help
+chmod 755 $R/init $R/etc/init.d/rcS $R/usr/sbin/uc-pxx-install-rootfs $R/usr/sbin/uc-pxx-rescue-help \
+	$R/usr/sbin/uc-pxx-findfs $R/usr/sbin/tsx-data-backup
 # The shared rescue tools of tsx-linux-common (package tsx-rescue-ui). The
 # board file is the one of the root file system: one source.
 for f in tsx-rescue-status tsx-confont tsx-rescue-backlight tsx-rescue-login tsx-data-backup tsx-data-restore; do
 	[ -f "$TSX_COMMON/rescue/usr/sbin/$f" ] || { echo "mkinitramfs.sh: $TSX_COMMON/rescue/usr/sbin/$f is missing"; exit 1; }
-	install -D -m 755 "$TSX_COMMON/rescue/usr/sbin/$f" $R/usr/sbin/$f
+	case $f in
+	# The data tools go to /usr/libexec/tsx-rescue. The wrapper
+	# /usr/sbin/tsx-data-backup of the overlay (and the link tsx-data-restore)
+	# runs them with uc-pxx-findfs: the root file system of the booted slot
+	# and /data on userdata, never a file system by its label alone
+	# (MAINLINE-STEP2-DESIGN review F9).
+	tsx-data-backup|tsx-data-restore) install -D -m 755 "$TSX_COMMON/rescue/usr/sbin/$f" $R/usr/libexec/tsx-rescue/$f;;
+	*) install -D -m 755 "$TSX_COMMON/rescue/usr/sbin/$f" $R/usr/sbin/$f;;
+	esac
 done
+ln -sf tsx-data-backup $R/usr/sbin/tsx-data-restore
 echo "rescue tools: $(cd "$TSX_COMMON" && git describe --always --dirty 2>/dev/null || echo 'tsx-linux-common, no git')"
 install -D -m 644 /w/rootfs/overlay/usr/local/lib/tsx/board.sh $R/usr/local/lib/tsx/board.sh
 install -D -m 755 "$UC_PXX_BOOTCTL" $R/usr/sbin/uc-pxx-bootctl
@@ -151,7 +163,8 @@ else
 fi
 for f in /sbin/init /sbin/switch_root /sbin/findfs /sbin/blkid /sbin/e2fsck /usr/sbin/resize2fs /usr/sbin/dumpe2fs \
 	/usr/sbin/dropbear /usr/share/udhcpc/default.script /usr/sbin/tsx-rescue-status /usr/sbin/tsx-rescue-login \
-	/usr/sbin/tsx-rescue-backlight /usr/sbin/tsx-confont /usr/sbin/tsx-data-backup /usr/sbin/uc-pxx-install-rootfs \
+	/usr/sbin/tsx-rescue-backlight /usr/sbin/tsx-confont /usr/sbin/tsx-data-backup /usr/sbin/tsx-data-restore \
+	/usr/libexec/tsx-rescue/tsx-data-backup /usr/libexec/tsx-rescue/tsx-data-restore /usr/sbin/uc-pxx-findfs /usr/sbin/uc-pxx-install-rootfs \
 	/usr/sbin/uc-pxx-bootctl /usr/sbin/uc-pxx-reboot /usr/sbin/uc-pxx-slot /usr/libexec/uc-pxx-reboot-syscall /usr/bin/evtest /usr/share/tsx/consolefonts/ter-132b.psf /usr/local/lib/tsx/board.sh; do
 	[ -e "$R$f" ] || { echo "mkinitramfs.sh: $f is missing in the initramfs"; exit 1; }
 done

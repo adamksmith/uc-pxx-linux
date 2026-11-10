@@ -1,0 +1,53 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# uc-pxx-findfs LABEL=NAME: the findfs of the shared rescue tools of
+# tsx-linux-common in the uc-pxx rescue system. rcS gives it to
+# tsx-rescue-login (TSX_RESCUE_FINDFS), and the wrapper tsx-data-backup gives
+# it to the common tsx-data-backup and tsx-data-restore (TSX_DATA_FINDFS).
+#
+# It finds a file system only by the GPT name of its partition, never by the
+# label alone: with mainline in both slots, system_a and system_b hold the same
+# image with the same label (MAINLINE-STEP2-DESIGN review F7), and a rescue
+# tool must act on the booted slot or refuse (review F9).
+#   LABEL=tsxroot  the partition named system_<booted slot> (uc-pxx-slot),
+#                  when it holds ext4 with the label tsxroot. A RAM boot (no
+#                  slot) or a slot that cannot be read: nothing, exit 1. The
+#                  rescue tools then use no root file system (the login is a
+#                  one-time password; a backup or restore of the root file
+#                  system refuses).
+#   LABEL=tsxdata  the partition named userdata, when it holds ext4 with the
+#                  label tsxdata (the /data of both slots). Never tsxdata-new
+#                  or another label.
+# Any other argument: exit 1. Prints the device and exits 0. Writes nothing.
+# Test hooks: TSX_SYSBLOCK (/sys/class/block), TSX_DEVDIR (/dev), UC_PXX_SLOT
+# (the program uc-pxx-slot), UC_PXX_BLKID (blkid).
+set -u
+SYSB=${TSX_SYSBLOCK:-/sys/class/block}
+DEVD=${TSX_DEVDIR:-/dev}
+SLOTCMD=${UC_PXX_SLOT:-/usr/sbin/uc-pxx-slot}
+BLKID=${UC_PXX_BLKID:-blkid}
+[ $# = 1 ] || exit 1
+part() {
+	for u in "$SYSB"/mmcblk*p*/uevent; do
+		[ -r "$u" ] && grep -qx "PARTNAME=$1" "$u" || continue
+		d=${u%/uevent}; echo "$DEVD/${d##*/}"; return 0
+	done
+	return 1
+}
+# is_fs DEV LABEL: an ext4 file system with exactly this label
+is_fs() {
+	o=$($BLKID "$1" 2>/dev/null) || return 1
+	[ "$(printf '%s\n' "$o" | sed -n 's/.* TYPE="\([^"]*\)".*/\1/p')" = ext4 ] || return 1
+	[ "$(printf '%s\n' "$o" | sed -n 's/.* LABEL="\([^"]*\)".*/\1/p')" = "$2" ]
+}
+case $1 in
+LABEL=tsxroot)
+	slot=$("$SLOTCMD" 2>/dev/null) || exit 1
+	case $slot in a|b) ;; *) exit 1;; esac
+	name=system_$slot;;
+LABEL=tsxdata) name=userdata;;
+*) exit 1;;
+esac
+dev=$(part "$name") || exit 1
+is_fs "$dev" "${1#LABEL=}" || exit 1
+echo "$dev"

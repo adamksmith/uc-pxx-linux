@@ -1,0 +1,16 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# tsx-data-backup and tsx-data-restore (a link to this file) of the uc-pxx
+# rescue system: the tools of tsx-linux-common (in /usr/libexec/tsx-rescue,
+# see their --help), with the file systems that uc-pxx-findfs finds
+# (MAINLINE-STEP2-DESIGN review F9): /data on userdata (ext4 tsxdata), else the
+# root file system of the booted slot (system_a or system_b). A RAM boot with
+# no /data on userdata has neither: the tools refuse. They never use a file
+# system by its label alone.
+export TSX_DATA_FINDFS=/usr/sbin/uc-pxx-findfs
+# the two labels are fixed here: uc-pxx-findfs maps each to one partition
+unset TSX_DATA_LABEL TSX_ROOTFS_LABEL
+case ${0##*/} in
+tsx-data-restore) exec /usr/libexec/tsx-rescue/tsx-data-backup --restore "$@";;
+esac
+exec /usr/libexec/tsx-rescue/tsx-data-backup "$@"

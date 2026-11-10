@@ -1,7 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# uc-pxx-install-rootfs: write a root file system image into system_a, from
-# the rescue system, as root.
+# uc-pxx-install-rootfs: write a root file system image into the root
+# partition of the booted slot (system_a or system_b), from the rescue
+# system, as root.
 #
 #   uc-pxx-install-rootfs [--size BYTES] SHA256 [IMAGE]
 #   uc-pxx-install-rootfs --check
@@ -13,33 +14,34 @@
 # the script stops at once when the stream has another length.
 # --check shows the preflight and stops. It writes nothing.
 #
-# The script writes one place: the partition whose GPT name is system_a
-# (mmcblk0p22, 1792 MiB). It never writes boot_a, the A/B metadata (misc), the
-# idbloader, the partition table or any other partition. Boot_a is written
-# on the running system with uc-pxx-flash-boot.
+# The script writes one place: the root partition of the slot that U-Boot
+# started (uc-pxx-slot): system_a (mmcblk0p22) in a boot of slot A, system_b
+# (mmcblk0p23) in a boot of slot B, 1792 MiB each. A RAM boot (no slot) or a
+# slot it cannot read: it refuses. It never writes boot_a or boot_b, the A/B
+# metadata (misc), the idbloader, the partition table or any other partition.
 #
 # Steps, each checked:
 #   1. Preflight, shown before anything is written:
-#      - the partition system_a is mmcblk0p22, on the eMMC, exactly 1792 MiB,
-#        and it is not mounted;
-#      - the A/B state (uc-pxx-bootctl status, read only): slot B must be
-#        successful with priority 1 to 14 and no tries left. So the unit has a
-#        slot that boots, whatever happens to system_a;
-#      - the image fits in system_a.
-#   2. The image is written into system_a and read back (sha256).
+#      - the booted slot is A or B; the partition named system_<slot> is the
+#        fixed node above, on the eMMC, exactly 1792 MiB, and not mounted;
+#      - the A/B state (uc-pxx-bootctl status, read only): the OTHER slot
+#        must be successful with priority 1 to 14 and no tries left. So the
+#        unit has a slot that boots, whatever happens to this root partition;
+#      - the image fits.
+#   2. The image is written and read back (sha256).
 #   3. Its file system must be ext4 with the label tsxroot. The script checks
-#      it (e2fsck) and grows it to fill system_a (resize2fs). If the growth
-#      fails, /init grows it at the next boot.
-# Then "reboot -f" starts the new system. The first boot of slot A with the new
-# root file system counts as a try. The boot-marking hook marks slot A after a
-# healthy boot.
+#      it (e2fsck) and grows it to fill the partition (resize2fs). If the
+#      growth fails, /init grows it at the next boot.
+# Then "reboot -f" starts the new system. The first boot of the slot with the
+# new root file system counts as a try when the slot is trying. The
+# boot-marking hook marks it after a healthy boot.
 # Every long step prints its progress on standard error (the host shows it as
 # it comes): MiB, percent and rate for each write and read-back, and a line
 # with the elapsed time every TSX_HB_S seconds (default 10) for the other
 # long steps. The rescue screen shows the same step and a progress bar.
 # Test hooks: TSX_SYSBLOCK (/sys/class/block), TSX_DEVDIR (/dev), TSX_BOOTCTL
-# (uc-pxx-bootctl), TSX_MOUNTS (/proc/mounts), TSX_RUN (/run),
-# TSX_SYSTEM_A_SECTORS (3670016), TSX_TMP (/tmp).
+# (uc-pxx-bootctl), UC_PXX_SLOT (uc-pxx-slot), TSX_MOUNTS (/proc/mounts),
+# TSX_RUN (/run), TSX_SYSTEM_SECTORS (3670016), TSX_TMP (/tmp).
 set -eu
 RUN=${TSX_RUN:-/run}
 TMP=${TSX_TMP:-/tmp}
@@ -58,9 +60,9 @@ die() { say "ERROR: $*"; exit 1; }
 SYSB=${TSX_SYSBLOCK:-/sys/class/block}
 DEVD=${TSX_DEVDIR:-/dev}
 BOOTCTL=${TSX_BOOTCTL:-/usr/sbin/uc-pxx-bootctl}
+SLOTCMD=${UC_PXX_SLOT:-/usr/sbin/uc-pxx-slot}
 MOUNTS=${TSX_MOUNTS:-/proc/mounts}
-SYSA_SECTORS=${TSX_SYSTEM_A_SECTORS:-3670016}
-SYSA_NAME=system_a SYSA_DEV=mmcblk0p22
+SYS_SECTORS=${TSX_SYSTEM_SECTORS:-${TSX_SYSTEM_A_SECTORS:-3670016}}
 
 sha= img= size=0 next= check=0
 for a in "$@"; do
@@ -174,17 +176,26 @@ fstype() { blkid "$1" 2>/dev/null | sed -n 's/.* TYPE="\([^"]*\)".*/\1/p'; }
 
 # ------------------------------------------------------ step 1: preflight ---
 say "preflight (nothing is written yet)"
-rp=$(part "$SYSA_NAME") || die "no partition with the GPT name $SYSA_NAME"
-[ "$rp" = "$SYSA_DEV" ] || die "$SYSA_NAME is $rp, not $SYSA_DEV: refusing"
+# the booted slot: its root partition is the only one this script writes
+slot=$("$SLOTCMD" 2>/dev/null) && src=0 || src=$?
+case $src:$slot in
+0:a) SYS_NAME=system_a SYS_DEV=mmcblk0p22 OTHER=B;;
+0:b) SYS_NAME=system_b SYS_DEV=mmcblk0p23 OTHER=A;;
+1:*) die "no booted slot (no u-boot,bootargs: a RAM boot). This script writes only the root partition of the slot that U-Boot started: refusing";;
+*) die "the booted slot cannot be read (uc-pxx-slot exit $src): refusing";;
+esac
+say "  booted slot  : $(echo "$slot" | tr a-z A-Z)"
+rp=$(part "$SYS_NAME") || die "no partition with the GPT name $SYS_NAME"
+[ "$rp" = "$SYS_DEV" ] || die "$SYS_NAME is $rp, not $SYS_DEV: refusing"
 ROOT=$DEVD/$rp
-say "  target       : $ROOT (GPT name $SYSA_NAME)"
+say "  target       : $ROOT (GPT name $SYS_NAME)"
 mt=$(cat "$SYSB/${rp%p*}/device/type" 2>/dev/null || true)
 case $mt in MMC*) ;; *) die "${rp%p*} is not an eMMC (type '${mt:-unknown}'): refusing";; esac
 [ -b "$ROOT" ] || [ -f "$ROOT" ] || die "$ROOT is not a block device"
 ssz=$(cat "$SYSB/$rp/size" 2>/dev/null || echo 0)
-[ "$ssz" = "$SYSA_SECTORS" ] || die "$SYSA_NAME has $ssz sectors, expected $SYSA_SECTORS (1792 MiB): refusing"
+[ "$ssz" = "$SYS_SECTORS" ] || die "$SYS_NAME has $ssz sectors, expected $SYS_SECTORS (1792 MiB): refusing"
 say "  size         : $((ssz / 2048)) MiB"
-mounted "$ROOT" && die "$ROOT ($SYSA_NAME) is mounted"
+mounted "$ROOT" && die "$ROOT ($SYS_NAME) is mounted"
 say "  now holds    : $(fstype "$ROOT" || true) '$(label "$ROOT" || true)'"
 # the A/B state: the unit must have a slot that boots whatever happens here
 [ -x "$BOOTCTL" ] || die "no $BOOTCTL: cannot check the A/B state"
@@ -194,8 +205,10 @@ cur=$(printf '%s\n' "$bc" | sed -n 's/^.*current: A{prio \([0-9]*\) tries \([0-9
 set -- $cur
 say "  slot A       : priority $1, tries $2, successful $3"
 say "  slot B       : priority $4, tries $5, successful $6"
-[ "$6" = 1 ] && [ "$5" = 0 ] && [ "$4" -ge 1 ] && [ "$4" -le 14 ] ||
-	die "slot B is not successful with priority 1 to 14: the unit would have no fallback. Refusing."
+# the other slot is the fallback: successful, priority 1 to 14, no tries left
+if [ "$OTHER" = B ]; then op=$4 ot=$5 os=$6; else op=$1 ot=$2 os=$3; fi
+[ "$os" = 1 ] && [ "$ot" = 0 ] && [ "$op" -ge 1 ] && [ "$op" -le 14 ] ||
+	die "slot $OTHER is not successful with priority 1 to 14: the unit would have no fallback. Refusing."
 if [ "$check" = 1 ]; then
 	say "done: preflight OK. --check writes nothing"
 	exit 0
@@ -204,37 +217,37 @@ echo "$sha" | grep -qE '^[0-9a-f]{64}$' || { sed -n '2,12p' "$0" | sed 's/^# \{0
 [ -z "$img" ] || [ -r "$img" ] || die "$img: not readable"
 if [ -n "$img" ] && [ "$size" -eq 0 ]; then size=$(wc -c < "$img"); fi
 if [ "$size" -gt 0 ]; then
-	[ "$size" -le $((SYSA_SECTORS * 512)) ] || die "the image ($size bytes) is larger than $SYSA_NAME"
+	[ "$size" -le $((SYS_SECTORS * 512)) ] || die "the image ($size bytes) is larger than $SYS_NAME"
 	say "  image        : $((size / 1048576)) MiB, sha256 $sha"
 else
 	say "  image        : from standard input (give --size to see percent), sha256 $sha"
 fi
-say "  will write   : $ROOT only. Not boot_a, not misc, nothing else"
+say "  will write   : $ROOT ($SYS_NAME) only. Not boot_a or boot_b, not misc, nothing else"
 say "preflight OK"
 
-# ----------------------------------------------------- step 2: system_a ---
-say "writing the image into $SYSA_NAME ($ROOT). DO NOT power off the system"
+# ------------------------------------------- step 2: the root partition ---
+say "writing the image into $SYS_NAME ($ROOT). DO NOT power off the system"
 t_w=$(date +%s)
 rm -f "$RUN/tsx-progress" 2>/dev/null || true
 wrc=0
-if [ -n "$img" ]; then pr_write "$ROOT" "$SYSA_NAME" "$size" "$img" || wrc=$?
-else pr_write "$ROOT" "$SYSA_NAME" "$size" - || wrc=$?; fi
-[ "$wrc" = 0 ] || die "dd failed with code $wrc ($(tail -n 1 "$TMP/uc-pxx-install.dd")). $SYSA_NAME is not usable: run this again"
+if [ -n "$img" ]; then pr_write "$ROOT" "$SYS_NAME" "$size" "$img" || wrc=$?
+else pr_write "$ROOT" "$SYS_NAME" "$size" - || wrc=$?; fi
+[ "$wrc" = 0 ] || die "dd failed with code $wrc ($(tail -n 1 "$TMP/uc-pxx-install.dd")). $SYS_NAME is not usable: run this again"
 n=$(sed -n 's/^\([0-9][0-9]*\) bytes.*/\1/p' "$TMP/uc-pxx-install.dd" | tail -n 1)
 [ -n "$n" ] && [ "$n" -gt 0 ] || die "nothing written ($(tail -n 1 "$TMP/uc-pxx-install.dd"))"
-[ "$size" -eq 0 ] || [ "$n" -eq "$size" ] || die "wrote $n bytes, the stream should have $size bytes (cut short?). $SYSA_NAME is not usable: run this again"
-[ "$n" -le $((SYSA_SECTORS * 512)) ] || die "the image is larger than $SYSA_NAME"
-say "  $(_pr_text "$SYSA_NAME written" "$n" "$n" "$(( $(date +%s) - t_w ))")"
+[ "$size" -eq 0 ] || [ "$n" -eq "$size" ] || die "wrote $n bytes, the stream should have $size bytes (cut short?). $SYS_NAME is not usable: run this again"
+[ "$n" -le $((SYS_SECTORS * 512)) ] || die "the image is larger than $SYS_NAME"
+say "  $(_pr_text "$SYS_NAME written" "$n" "$n" "$(( $(date +%s) - t_w ))")"
 sync; { echo 3 > /proc/sys/vm/drop_caches; } 2>/dev/null || true
 say "reading back $n bytes"
 t_r=$(date +%s)
-got=$(pr_sha "$ROOT" "$SYSA_NAME read-back" "$n") || die "the read-back of $SYSA_NAME failed"
-say "  $(_pr_text "$SYSA_NAME read back" "$n" "$n" "$(( $(date +%s) - t_r ))")"
-[ "$got" = "$sha" ] || die "sha256 of what is in $SYSA_NAME is $got, expected $sha (bad transfer?). $SYSA_NAME is not usable: run this again"
+got=$(pr_sha "$ROOT" "$SYS_NAME read-back" "$n") || die "the read-back of $SYS_NAME failed"
+say "  $(_pr_text "$SYS_NAME read back" "$n" "$n" "$(( $(date +%s) - t_r ))")"
+[ "$got" = "$sha" ] || die "sha256 of what is in $SYS_NAME is $got, expected $sha (bad transfer?). $SYS_NAME is not usable: run this again"
 say "sha256 matches"
 [ "$(fstype "$ROOT")" = ext4 ] || die "the image is not an ext4 file system"
 [ "$(label "$ROOT")" = tsxroot ] || die "the image has no ext4 label tsxroot (found '$(label "$ROOT")')"
-say "$SYSA_NAME verified (ext4, label tsxroot). Checking and growing the file system"
+say "$SYS_NAME verified (ext4, label tsxroot). Checking and growing the file system"
 
 # ------------------------------------------- step 3: check and grow ---
 rc=0; hb "checking the root file system" e2fsck -f -p "$ROOT" >&2 || rc=$?

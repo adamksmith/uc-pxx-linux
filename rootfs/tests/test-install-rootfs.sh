@@ -7,6 +7,9 @@
 #   - a write from a file and from standard input, read back and checked
 #   - only system_a changes: boot_a and misc stay byte for byte the same
 #   - a wrong sha256, a wrong --size, a label that is not tsxroot
+#   - the booted slot (MAINLINE-STEP2-DESIGN review F9): a boot of slot B
+#     writes only system_b, with slot A as the fallback; a RAM boot or an
+#     unreadable slot is refused
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 IR=$HERE/initramfs/overlay/usr/sbin/uc-pxx-install-rootfs
@@ -25,14 +28,22 @@ mkpart() { # NAME PARTNAME
 	dd if=/dev/urandom of="$D/$1" bs=512 count=$SECT status=none
 }
 mkdir -p "$S/mmcblk0/device"; echo MMC > "$S/mmcblk0/device/type"
-mkpart mmcblk0p5 misc; mkpart mmcblk0p13 boot_a; mkpart mmcblk0p22 system_a
+mkpart mmcblk0p5 misc; mkpart mmcblk0p13 boot_a; mkpart mmcblk0p22 system_a; mkpart mmcblk0p23 system_b
+# the booted slot: a stand-in for uc-pxx-slot that prints the slot in $T/slot (exit 0), or exits with $T/slotrc
+slot() { echo "$1" > "$T/slot"; rm -f "$T/slotrc"; }
+slotrc() { rm -f "$T/slot"; echo "$1" > "$T/slotrc"; }
+printf '#!/bin/sh
+[ -e "%s/slotrc" ] && exit "$(cat "%s/slotrc")"
+cat "%s/slot"
+' "$T" "$T" "$T" > "$T/uc-pxx-slot"
+chmod 755 "$T/uc-pxx-slot"; slot a
 : > "$T/mounts"
 bc() { # A_PRIO A_TRIES A_SUCC B_PRIO B_TRIES B_SUCC
 	printf '#!/bin/sh\necho "uc-pxx-bootctl: current: A{prio %s tries %s succ %s} B{prio %s tries %s succ %s} crc 1" >&2\necho "libavb-would-boot: a"\n' "$@" > "$T/bootctl"
 	chmod 755 "$T/bootctl"
 }
 bc 15 7 0 14 0 1
-export TSX_SYSBLOCK=$S TSX_DEVDIR=$D TSX_BOOTCTL=$T/bootctl TSX_MOUNTS=$T/mounts TSX_RUN=$T/run TSX_TMP=$T/tmp TSX_SYSTEM_A_SECTORS=$SECT TSX_HB_S=1
+export TSX_SYSBLOCK=$S TSX_DEVDIR=$D TSX_BOOTCTL=$T/bootctl UC_PXX_SLOT=$T/uc-pxx-slot TSX_MOUNTS=$T/mounts TSX_RUN=$T/run TSX_TMP=$T/tmp TSX_SYSTEM_SECTORS=$SECT TSX_HB_S=1
 run() { busybox sh "$IR" "$@" > "$T/out" 2>&1; echo $? > "$T/rc"; }
 rc() { cat "$T/rc"; }
 sum() { sha256sum "$D/$1" | cut -d' ' -f1; }
@@ -42,7 +53,7 @@ SHA=$(sha256sum "$T/good.img" | cut -d' ' -f1)
 SIZE=$(wc -c < "$T/good.img")
 mkfs.ext4 -q -F -L other -O ^has_journal "$T/other.img" 3M
 SHA_O=$(sha256sum "$T/other.img" | cut -d' ' -f1)
-BOOT0=$(sum mmcblk0p13) MISC0=$(sum mmcblk0p5) SYS0=$(sum mmcblk0p22)
+BOOT0=$(sum mmcblk0p13) MISC0=$(sum mmcblk0p5) SYS0=$(sum mmcblk0p22) SYSB0=$(sum mmcblk0p23)
 
 echo "== syntax and --help =="
 busybox sh -n "$IR" && ok "busybox sh -n" || bad "busybox sh -n"
@@ -59,7 +70,7 @@ refuse() { # WHAT PATTERN ARGS...
 	w=$1 p=$2; shift 2
 	run "$@"
 	if [ "$(rc)" != 0 ] && grep -q -- "$p" "$T/out"; then ok "refused: $w"; else bad "not refused: $w ($(tail -n 1 "$T/out"))"; fi
-	[ "$(sum mmcblk0p22)" = "$SYS0" ] && [ "$(sum mmcblk0p13)" = "$BOOT0" ] && [ "$(sum mmcblk0p5)" = "$MISC0" ] || bad "a refusal changed a partition ($w)"
+	[ "$(sum mmcblk0p22)" = "$SYS0" ] && [ "$(sum mmcblk0p23)" = "$SYSB0" ] && [ "$(sum mmcblk0p13)" = "$BOOT0" ] && [ "$(sum mmcblk0p5)" = "$MISC0" ] || bad "a refusal changed a partition ($w)"
 }
 refuse "a bad sha256 argument" "usage\|uc-pxx-install-rootfs" notasha "$T/good.img"
 refuse "an image that is too large" "larger than" --size $((SECT * 512 + 1)) "$SHA"
@@ -78,6 +89,11 @@ echo "PARTNAME=system_b" > "$S/mmcblk0p22/uevent"; refuse "no partition named sy
 echo "PARTNAME=system_a" > "$S/mmcblk0p22/uevent"
 mv "$S/mmcblk0p22" "$S/mmcblk0p21"; refuse "system_a on another partition number" "not mmcblk0p22" "$SHA" "$T/good.img"
 mv "$S/mmcblk0p21" "$S/mmcblk0p22"
+slotrc 1; refuse "a RAM boot (no booted slot)" "RAM boot" "$SHA" "$T/good.img"
+slotrc 1; refuse "a RAM boot, --check" "RAM boot" --check
+slotrc 2; refuse "a slot word that cannot be read (uc-pxx-slot exit 2)" "cannot be read" "$SHA" "$T/good.img"
+slot c; refuse "uc-pxx-slot prints another slot" "cannot be read" "$SHA" "$T/good.img"
+slot a
 
 echo "== a write from a file =="
 run "$SHA" "$T/good.img"
@@ -111,6 +127,26 @@ run "$WRONG" "$T/good.img"
 run "$SHA_O" "$T/other.img"
 [ "$(rc)" != 0 ] && grep -q 'no ext4 label tsxroot' "$T/out" && ok "a label that is not tsxroot fails" || bad "a wrong label passed"
 [ "$(sum mmcblk0p13)" = "$BOOT0" ] && [ "$(sum mmcblk0p5)" = "$MISC0" ] && ok "boot_a and misc are still unchanged" || bad "boot_a or misc changed"
+
+echo "== a boot of slot B: only system_b, slot A is the fallback =="
+slot b; bc 14 0 1 15 7 0
+dd if=/dev/urandom of="$D/mmcblk0p23" bs=512 count=$SECT status=none; SYSB0=$(sum mmcblk0p23); SYS0=$(sum mmcblk0p22)
+bc 15 7 0 14 0 1; refuse "slot B booted, slot A is not successful" "slot A is not successful" "$SHA" "$T/good.img"
+bc 15 0 1 14 7 0; refuse "slot B booted, slot A successful with priority 15" "slot A is not successful" "$SHA" "$T/good.img"
+bc 14 3 1 15 7 0; refuse "slot B booted, slot A with tries left" "slot A is not successful" "$SHA" "$T/good.img"
+bc 14 0 1 15 7 0
+echo "PARTNAME=system_b" > "$S/mmcblk0p22/uevent"; refuse "system_b on another partition number" "not mmcblk0p23" "$SHA" "$T/good.img"
+echo "PARTNAME=system_a" > "$S/mmcblk0p22/uevent"
+echo "$D/mmcblk0p23 /mnt ext4 rw 0 0" > "$T/mounts"; refuse "system_b mounted" "is mounted" "$SHA" "$T/good.img"
+: > "$T/mounts"
+run --check
+{ [ "$(rc)" = 0 ] && grep -q 'target       : .*mmcblk0p23 (GPT name system_b)' "$T/out" && grep -q 'booted slot  : B' "$T/out"; } && ok "slot B: --check names system_b" || bad "slot B --check: $(tail -n 2 "$T/out")"
+run "$SHA" "$T/good.img"
+[ "$(rc)" = 0 ] && ok "slot B: exit 0" || bad "slot B: exit $(rc): $(tail -n 3 "$T/out")"
+[ "$(sum mmcblk0p23)" != "$SYSB0" ] && blkid "$D/mmcblk0p23" | grep -q 'LABEL="tsxroot"' && ok "slot B: system_b written, label tsxroot" || bad "slot B: system_b not written"
+[ "$(sum mmcblk0p22)" = "$SYS0" ] && ok "slot B: system_a is unchanged" || bad "slot B: system_a changed"
+[ "$(sum mmcblk0p13)" = "$BOOT0" ] && [ "$(sum mmcblk0p5)" = "$MISC0" ] && ok "slot B: boot_a and misc unchanged" || bad "slot B: boot_a or misc changed"
+slot a; bc 15 7 0 14 0 1
 
 echo "== the rescue state files =="
 touch "$T/run/tsx-rescue-login"
