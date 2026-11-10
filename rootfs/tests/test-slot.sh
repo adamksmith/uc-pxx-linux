@@ -48,6 +48,7 @@ grep -q '^rootname=system_${slot:-a}$' "$INIT" && ok "the root partition is syst
 grep -q 'part_by_name "$rootname"' "$INIT" && ok "find_root looks for the GPT name of the booted slot" || bad "find_root does not use the booted slot"
 grep -q 'part_by_name system_a' "$INIT" && bad "init still looks for system_a by name" || ok "no fixed system_a lookup is left"
 grep -q 'grep -c '"'"' LABEL="tsxroot"'"'"')" = 1 \] || return 1' "$INIT" && ok "the label fallback needs exactly one tsxroot" || bad "the label fallback does not count the tsxroot file systems"
+grep -q '^	\[ -z "\$slot" \] || return 1$' "$INIT" && ok "the label fallback only without a slot" || bad "a slot boot may fall back to a label"
 # find_root of init, run with stand-ins: part_by_name finds the slot's partition; blkid/findfs for the fallback
 sed -n '/^# find_root: the device of the root file system, or nothing$/,/^}$/p' "$INIT" > "$T/find_root.sh"
 cat > "$T/rig.sh" <<'RIG'
@@ -59,19 +60,21 @@ cat "$T/find_root.sh" >> "$T/rig.sh"
 # [ -b ] is true only for block devices: stand in with a function
 sed -i 's/\[ -b "\$d" \]/isblk "$d"/' "$T/rig.sh"
 echo 'isblk() { case $1 in /dev/blk-*) return 0;; esac; return 1; }; find_root' >> "$T/rig.sh"
-fr() { rootname=$1 PARTS=$2 BLKID=$3 FINDFS=$4 sh "$T/rig.sh"; echo ":$?"; }
+fr() { rootname=$1 PARTS=$2 BLKID=$3 FINDFS=$4 slot=${5-} sh "$T/rig.sh"; echo ":$?"; }
 two='/dev/mmcblk0p22: LABEL="tsxroot" TYPE="ext4"
 /dev/mmcblk0p23: LABEL="tsxroot" TYPE="ext4"
 '
 one='/dev/mmcblk0p22: LABEL="tsxroot" TYPE="ext4"
 '
-eq "$(fr system_b "system_a system_b" "$two" /dev/mmcblk0p22)" "/dev/blk-system_b
+eq "$(fr system_b "system_a system_b" "$two" /dev/mmcblk0p22 b)" "/dev/blk-system_b
 :0" "slot B: the partition named system_b, not the first tsxroot"
-eq "$(fr system_a "system_a system_b" "$two" /dev/mmcblk0p23)" "/dev/blk-system_a
+eq "$(fr system_b "system_a" "$one" /dev/mmcblk0p22 b)" ":1" "slot B, system_b not there yet and one tsxroot (p22): no root (wait), never system_a"
+eq "$(fr system_a "" "$one" /dev/mmcblk0p22 a)" ":1" "slot A without the GPT name: no label fallback"
+eq "$(fr system_a "system_a system_b" "$two" /dev/mmcblk0p23 a)" "/dev/blk-system_a
 :0" "slot A: the partition named system_a"
 eq "$(fr system_b "" "$two" /dev/mmcblk0p22)" ":1" "no GPT name and two tsxroot: no root (the rescue), never a guess"
-eq "$(fr system_b "" "$one" /dev/mmcblk0p22)" "/dev/mmcblk0p22
-:0" "no GPT name and one tsxroot: that one (as before)"
+eq "$(fr system_a "" "$one" /dev/mmcblk0p22)" "/dev/mmcblk0p22
+:0" "a RAM boot (no slot), no GPT name and one tsxroot: that one (as before)"
 eq "$(fr system_b "" "$one" /dev/sda1)" ":1" "the one tsxroot is not on the eMMC: no root"
 
 echo "== mkinitramfs.sh =="

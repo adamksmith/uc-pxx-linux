@@ -176,10 +176,10 @@ initramfs` makes it as the uncompressed cpio archive
    `uc-pxx-slot` reads the word `androidboot.slot_suffix=_a` or `_b` of
    `/proc/device-tree/chosen/u-boot,bootargs`, and the root partition is the
    one with the GPT name `system_a` or `system_b`. A RAM boot has no such
-   word: then `system_a`, as before. If no partition has the name, the eMMC
-   partition with the label `tsxroot`, but only when exactly one partition
-   has that label (with mainline in both slots, both have it). Wait up to 15
-   seconds for it.
+   word: then `system_a`, as before, and only then, if no partition has the
+   name, the eMMC partition with the label `tsxroot`, when exactly one
+   partition has that label (with mainline in both slots, both have it). A
+   slot boot never falls back to a label. Wait up to 15 seconds for it.
 3. Stop with the rescue system if the partition does not hold an ext4 file
    system with the label `tsxroot`. The script never checks, grows or mounts
    another file system.

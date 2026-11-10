@@ -12,9 +12,10 @@
 # with an ext4 file system labeled tsxroot. The slot is the word
 # androidboot.slot_suffix of the U-Boot command line (uc-pxx-slot, from
 # /proc/device-tree/chosen/u-boot,bootargs). A boot without it (a RAM boot by
-# `fastboot boot`) uses system_a, as before. If no partition has that name, the
-# one partition of the eMMC with the label tsxroot, and only when exactly one
-# has it (after step 2 both system_a and system_b have it). The script checks,
+# `fastboot boot`) uses system_a, as before. Only then, if no partition has
+# that name, the one partition of the eMMC with the label tsxroot, and only
+# when exactly one has it (after step 2 both system_a and system_b have it).
+# A slot boot never falls back to a label. The script checks,
 # grows or mounts only a file system with the label tsxroot.
 #
 # The script never writes the A/B metadata, a boot partition or the partition
@@ -190,6 +191,9 @@ find_root() {
 	if d=$(part_by_name "$rootname"); then
 		[ -b "$d" ] && { echo "$d"; return 0; }
 	fi
+	# The label fallback only without a slot (a RAM boot): with a slot, a
+	# missed name must never pick the other slot's root (it waits instead).
+	[ -z "$slot" ] || return 1
 	[ "$(blkid 2>/dev/null | grep -c ' LABEL="tsxroot"')" = 1 ] || return 1
 	d=$(findfs LABEL=tsxroot 2>/dev/null) || return 1
 	case $d in /dev/mmcblk*p*) echo "$d"; return 0;; esac
