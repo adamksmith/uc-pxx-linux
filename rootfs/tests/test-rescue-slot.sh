@@ -47,7 +47,7 @@ ff() { out=$(sh "$FF" "$@"); echo "$?:$out"; }
 echo "== uc-pxx-findfs =="
 busybox sh -n "$FF" && ok "busybox sh -n" || bad "busybox sh -n"
 [ -x "$FF" ] && ok "executable" || bad "not executable"
-grep -v '^#' "$FF" | grep -Eq '>[^&]|\bdd\b|mkfs|e2label|tune2fs|\bmount\b' && bad "uc-pxx-findfs writes or mounts something" || ok "uc-pxx-findfs writes and mounts nothing"
+grep -v '^#' "$FF" | sed -e 's#[0-9]*>/dev/null##g' -e 's#>&2##g' | grep -Eq '>|\bdd\b|mkfs|e2label|tune2fs|\bmount\b' && bad "uc-pxx-findfs writes or mounts something" || ok "uc-pxx-findfs writes and mounts nothing"
 reset; eq "$(ff LABEL=tsxroot)" "0:$T/dev/mmcblk0p22" "slot A, two tsxroot: system_a"
 reset; slot b; eq "$(ff LABEL=tsxroot)" "0:$T/dev/mmcblk0p23" "slot B, two tsxroot: system_b, not the first one"
 reset; slot b; fs mmcblk0p23 'LABEL="other" TYPE="ext4"'; eq "$(ff LABEL=tsxroot)" "1:" "slot B, system_b not tsxroot: nothing (never system_a)"
