@@ -168,6 +168,18 @@ mkdir -p "$T/data1" "$T/data2"
 eq "$(lvm_svc "$T/data1")" "" "tsxdata-new: /data is not mounted"
 eq "$(mig migrate)" "2" "migrate without --yes: usage (again)"
 
+echo "== a journal that needs recovery (a cut run): migrate refuses, format first (R2-11) =="
+python3 -I - "$LU" <<'PY'
+import struct, sys
+f = open(sys.argv[1], "r+b"); f.seek(1120); v = struct.unpack("<I", f.read(4))[0]
+f.seek(1120); f.write(struct.pack("<I", v | 4)); f.close()
+PY
+S3=$(ud_sha)
+eq "$(mig migrate --yes)" "1" "needs_recovery set: migrate refused"
+grep -q 'needs recovery' "$T/err" && ok "the reason is the journal" || bad "another reason ($(tail -n 1 "$T/err"))"
+[ "$(ud_sha)" = "$S3" ] && ok "nothing written" || bad "the refused migrate wrote"
+eq "$(mig format --yes)" "0" "format after it: exit 0"
+
 echo "== migrate without the Wi-Fi/Bluetooth files: refused =="
 mv "$T/src/lib/firmware/brcm/BCM4345C5.hcd" "$T/bt.save"
 S1=$(ud_sha)

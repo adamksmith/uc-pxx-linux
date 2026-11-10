@@ -252,6 +252,13 @@ do_migrate() {
 	miss=$(fw_check)
 	[ -z "$miss" ] || refuse "Wi-Fi/Bluetooth files missing in $SRC/lib/firmware: $(echo $miss): they must go to /data before the vendor partitions go"
 	[ -d "$SRC/data" ] || refuse "$SRC/data is not a folder"
+	# a journal that still needs recovery: a run that was cut while the file
+	# system was mounted. A replay could finish the snapshot of that run (its
+	# label may be in the journal) and hide what changed since: format first
+	# (review R2-11). s_feature_incompat at byte 1120, RECOVER = 0x4.
+	inc=$(od -An -tu4 -j 1120 -N 4 "$DEV" 2>/dev/null | tr -d ' ')
+	[ -n "$inc" ] || refuse "cannot read the superblock of $DEV"
+	[ $((inc & 4)) = 0 ] || refuse "the journal of $DEV needs recovery (a cut run): run format first"
 	trap 'fail "a signal stopped the migration"' INT TERM HUP
 	stop_services
 	e2fsck -p "$DEV" >> "$LOG" 2>&1; rc=$?

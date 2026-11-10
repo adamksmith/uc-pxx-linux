@@ -61,11 +61,18 @@ DIRS="var/lib/kiosk var/log var/lib/tsx var/lib/sendspin var/lib/tsx-voice root 
 DONE=tsxdata OLD=tsxdata-old
 RR=$RUN/uc-pxx-rootfs
 LOG=$RUN/uc-pxx-data-release.log
-STOPPED= RMOUNTED=
+STOPPED= RMOUNTED= MADE=
 say() { echo "uc-pxx-data-release: $*" >&2; echo "uc-pxx-data-release: $*" >> "$LOG" 2>/dev/null; }
 refuse() { say "REFUSED: $*"; exit 1; }
 fail() {
 	say "FAILED: $*"
+	# the copies under /data of the root file system that this run made (new
+	# files only: userdata keeps the data), so a failed copy does not leave the
+	# root file system full (review R2-10)
+	if [ -n "$RMOUNTED" ]; then
+		for n in $MADE; do rm -rf "${RR:?}/data/$n"; done
+		sync
+	fi
 	[ -z "$RMOUNTED" ] || umount "$RR" 2>/dev/null || umount -l "$RR" 2>/dev/null
 	for s in $STOPPED; do "$RCS" -q "$s" start > /dev/null 2>&1; done
 	say "userdata is still /data. Restart, then run copy again."
@@ -157,7 +164,10 @@ if command -v "$LVMCMD" > /dev/null 2>&1 && "$LVMCMD" vgs tsx > /dev/null 2>&1; 
 	refuse "the phase-1 LVM volume group tsx exists: its old /data would come back at the next boot. Remove it first (cleanup C2)"
 fi
 # room: what goes back must fit, with 64 MiB to spare
+# copy writes a top folder of tsx-data folders (var, root, home) whole before
+# it removes the moved folders from it: count /data twice (review R2-10)
 need=$(du -sk "$DATA" 2>/dev/null | cut -f1)
+[ -z "$need" ] || need=$((need * 2))
 free=$(df -Pk "${SRC:-/}" 2>/dev/null | awk 'NR == 2 { print $4 }')
 [ -n "$need" ] && [ -n "$free" ] && [ "$need" -lt $((free - 65536)) ] ||
 	refuse "the root file system has ${free:-?} KiB free; /data needs ${need:-?} KiB and 64 MiB to spare"
@@ -197,6 +207,7 @@ for e in "$DATA"/* "$DATA"/.[!.]* "$DATA"/..?*; do
 	case $n in lost+found) continue;; esac
 	top=0
 	for d in $DIRS; do case $d in "$n"|"$n"/*) top=1;; esac; done
+	[ -e "$RR/data/$n" ] || [ -L "$RR/data/$n" ] || MADE="$MADE $n"
 	if [ -d "$e" ] && [ ! -L "$e" ]; then copy_back "$e" "$RR/data/$n" || fail "the copy of $e"
 	else rm -rf "$RR/data/$n"; cp -a "$e" "$RR/data/$n" || fail "the copy of $e"; fi
 	if [ $top = 1 ]; then
