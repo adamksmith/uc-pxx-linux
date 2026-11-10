@@ -42,7 +42,7 @@ printf '#!/bin/sh\nexit 0\n' > "$T/bin/modprobe"
 chmod 755 "$T"/bin/*
 
 # part NAME DEV: a partition of the made-up eMMC
-part() { mkdir -p "$T/sys/$2"; echo "PARTNAME=$1" > "$T/sys/$2/uevent"; }
+part() { mkdir -p "$T/sys/$2"; echo "PARTNAME=$1" > "$T/sys/$2/uevent"; echo 16811008 > "$T/sys/$2/start"; echo 13724639 > "$T/sys/$2/size"; mkdir -p "$T/sys/mmcblk0/device"; echo MMC > "$T/sys/mmcblk0/device/type"; }
 fs() { mkdir -p "$T/blkid"; echo "$2" > "$T/blkid/$(echo "$1" | tr / _)"; }
 reset() {
 	rm -rf "$T/sys"/* "$T/blkid" "$T/mount.log" "$T/lvm.log" "$T/mount-fails"; : > "$T/mounts"; echo none > "$T/lvm"
@@ -105,6 +105,31 @@ rc=$(svc)
 reset; rm -rf "$T/sys/mmcblk0p28"; echo vg > "$T/lvm"; fs "$T/dev/tsx/data" 'LABEL="tsxdata" UUID="2" TYPE="ext4"'
 rc=$(svc)
 { [ "$rc" = 0 ] && [ "$(mounted)" = "$T/dev/tsx/data" ]; } && ok "no partition named userdata: phase 1 as before" || bad "no userdata partition (rc $rc)"
+reset; fs "$T/dev/mmcblk0p28" 'LABEL="tsxdata" UUID="1" TYPE="ext4"'; echo 16811009 > "$T/sys/mmcblk0p28/start"
+rc=$(svc)
+{ [ "$rc" = 0 ] && [ -z "$(mounted)" ]; } && ok "a userdata at another start: never mounted" || bad "userdata at another start was mounted"
+reset; fs "$T/dev/mmcblk0p28" 'LABEL="tsxdata" UUID="1" TYPE="ext4"'; echo SD > "$T/sys/mmcblk0/device/type"
+rc=$(svc)
+{ [ "$rc" = 0 ] && [ -z "$(mounted)" ]; } && ok "a userdata that is not on the eMMC: never mounted" || bad "a userdata not on the eMMC was mounted"
+grep -qx '# uc-pxx-data-mount: 1' "$SVC" && ok "the marker that mkrootfs.sh reads" || bad "no marker line"
+# the service names that the data tools stop are services of the image
+MIG=$HERE/overlay/usr/sbin/uc-pxx-data-migrate REL=$HERE/overlay/usr/sbin/uc-pxx-data-release
+COMMON=${TSX_COMMON:-$HERE/../../tsx-linux-common}
+l1=$(sed -n 's/^SERVICES=\${UC_PXX_MIGRATE_SERVICES-\(.*\)}$/\1/p' "$MIG"); l2=$(sed -n 's/^SERVICES=\${UC_PXX_MIGRATE_SERVICES-\(.*\)}$/\1/p' "$REL")
+[ -n "$l1" ] && [ "$l1" = "$l2" ] && ok "migrate and release stop the same services" || bad "the service lists differ ('$l1' / '$l2')"
+if [ -d "$COMMON/base" ]; then
+	miss=
+	for svc in $l1; do
+		case $svc in crond|syslog) continue;; esac   # busybox-openrc
+		ls "$COMMON"/*/etc/init.d/"$svc" > /dev/null 2>&1 || ls "$HERE"/overlay/etc/init.d/"$svc" > /dev/null 2>&1 || miss="$miss $svc"
+	done
+	[ -z "$miss" ] && ok "every service name is an OpenRC service of tsx-linux-common or busybox" || bad "no such service:$miss"
+	for svc in kiosk tsx-panelctl tsx-panel-app tsx-setupd tsx-setup-helper tsx-autoupdate tsx-buttons tsx-bt tsx-idled; do
+		case " $l1 " in *" $svc "*) ;; *) bad "the writer $svc is not stopped";; esac
+	done
+else
+	echo "  SKIPPED: no tsx-linux-common (TSX_COMMON) for the service names"
+fi
 grep -q '^	before localmount fsck tsx-data$' "$SVC" && ok "the service runs before localmount and tsx-data" || bad "the order of the service changed"
 
 echo "$N ok, $F failed"

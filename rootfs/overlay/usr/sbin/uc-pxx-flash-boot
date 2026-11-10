@@ -30,13 +30,18 @@ arm() {
 # boot (no /proc/device-tree/chosen/u-boot,bootargs at all), and only when the running root file system is
 # system_a. A system that runs from slot B (its updates go into system_b, so a new kernel in boot_a would not
 # match system_a), a slot word that cannot be read, or a root that is not system_a: refused here, before the
-# lock, the marker and any write.
-gs=$(/usr/sbin/uc-pxx-slot 2>/dev/null); grc=$?
-case $grc:$gs in
-0:a|1:) ;;
-0:b) die "the running system is slot B, do NOT change system_a or boot_a from here";;
-*) die "the booted slot cannot be read (uc-pxx-slot exit $grc), do NOT change system_a or boot_a";;
-esac
+# lock, the marker and any write. The slot word is read here with the rule of uc-pxx-slot (one
+# androidboot.slot_suffix word in /proc/device-tree/chosen/u-boot,bootargs), not by running it: a package
+# that ships this program without uc-pxx-slot must not block every later update (review R1-2).
+gp=/proc/device-tree/chosen/u-boot,bootargs
+if [ -e "$gp" ]; then
+	gs=$(tr '\000\t' '  ' < "$gp" 2>/dev/null | tr -s ' ' '\n' | sed -n 's/^androidboot\.slot_suffix=//p')
+	case $gs in
+	_a) ;;
+	_b) die "the running system is slot B, do NOT change system_a or boot_a from here";;
+	*) die "the booted slot cannot be read (no single androidboot.slot_suffix in $gp), do NOT change system_a or boot_a";;
+	esac
+fi
 groot=$(awk '$5 == "/" { d = $3 } END { print d }' /proc/self/mountinfo 2>/dev/null)
 gsys=
 for gu in /sys/class/block/mmcblk*p*/uevent; do

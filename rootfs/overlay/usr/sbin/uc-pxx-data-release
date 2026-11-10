@@ -14,14 +14,18 @@
 #                                       label tsxdata-old (no file system is
 #                                       left; Android formats it)
 #
-# copy (/data is the mounted userdata, ext4 tsxdata):
-#   1. stop the services that write the panel data,
+# copy (/data is the mounted userdata, ext4 tsxdata; refused on a unit with
+# the phase-1 LVM volume group tsx: its stale /data would be mounted again at
+# the next boot; refused when the root file system has not enough room):
+#   1. stop the services that write the panel data (they stay stopped: restart
+#      the unit after copy),
 #   2. mount the root file system of the running slot a second time on a
 #      private folder (that view has no bind mounts of tsx-data),
 #   3. for each directory that tsx-data moved (/data/<dir>/.tsx-moved): the
 #      copy on the root file system is replaced by /data/<dir> (without the
 #      marker), checked by the tree digest; every other entry of /data goes to
-#      /data/<entry> of the root file system, checked the same way,
+#      /data/<entry> of the root file system, checked the same way (also what
+#      lies under var, root or home outside the tsx-data directories),
 #   4. the label tsxdata-old on the mounted userdata (the last step; the ioctl
 #      FS_IOC_SETFSLABEL). The next boot mounts no /data, and tsx-data finds
 #      the directories on the root file system.
@@ -30,12 +34,14 @@
 # keeps its own root file system as it was.
 #
 # Exit: 0 done | 1 refused, nothing written | 2 usage | 3 failed after the
-# first write: userdata is still /data (tsxdata), restart and run copy again.
+# first write: copy: userdata is still /data (tsxdata), restart and run copy
+# again; wipe: the zeros are not complete, run wipe again.
 #
 # Test hooks: as uc-pxx-data-migrate (TSX_SYSBLOCK, TSX_DEVDIR, TSX_MOUNTS,
 # UC_PXX_MOUNTINFO, UC_PXX_SLOT, UC_PXX_SRC, UC_PXX_RUN, UC_PXX_RC_SERVICE,
 # UC_PXX_USERDATA_START, UC_PXX_USERDATA_SECTORS, UC_PXX_MIGRATE_SERVICES,
-# UC_PXX_SETLABEL), UC_PXX_DATA (/data: where userdata is mounted).
+# UC_PXX_SETLABEL), UC_PXX_DATA (/data: where userdata is mounted), UC_PXX_LVM
+# (lvm).
 set -u
 SYSB=${TSX_SYSBLOCK:-/sys/class/block}
 DEVD=${TSX_DEVDIR:-/dev}
@@ -49,7 +55,8 @@ RCS=${UC_PXX_RC_SERVICE:-rc-service}
 UD_NAME=userdata UD_DEV=mmcblk0p28
 UD_START=${UC_PXX_USERDATA_START:-16811008}
 UD_SECTORS=${UC_PXX_USERDATA_SECTORS:-13724639}
-SERVICES=${UC_PXX_MIGRATE_SERVICES-tsx-kiosk tsx-voice tsx-sendspin tsx-esphome tsx-mqtt tsx-setup crond syslog}
+SERVICES=${UC_PXX_MIGRATE_SERVICES-kiosk tsx-panel-app tsx-panelctl tsx-setupd tsx-setup-helper tsx-setup tsx-autoupdate tsx-buttons tsx-bt tsx-idled tsx-ledbar tsx-voice tsx-sendspin tsx-esphome tsx-mqtt crond syslog}
+LVMCMD=${UC_PXX_LVM:-lvm}
 DIRS="var/lib/kiosk var/log var/lib/tsx var/lib/sendspin var/lib/tsx-voice root home"
 DONE=tsxdata OLD=tsxdata-old
 RR=$RUN/uc-pxx-rootfs
@@ -144,6 +151,16 @@ fi
 slot_root
 is_fs "$DEV" "$DONE" || refuse "userdata is not ext4 $DONE"
 mounted_on "$DEV" "$DATA" || refuse "userdata is not mounted on $DATA"
+# phase 1 left a volume group: after the release uc-pxx-lvm would mount its
+# stale /data again (review R2-2). It must go first (cleanup C2).
+if command -v "$LVMCMD" > /dev/null 2>&1 && "$LVMCMD" vgs tsx > /dev/null 2>&1; then
+	refuse "the phase-1 LVM volume group tsx exists: its old /data would come back at the next boot. Remove it first (cleanup C2)"
+fi
+# room: what goes back must fit, with 64 MiB to spare
+need=$(du -sk "$DATA" 2>/dev/null | cut -f1)
+free=$(df -Pk "${SRC:-/}" 2>/dev/null | awk 'NR == 2 { print $4 }')
+[ -n "$need" ] && [ -n "$free" ] && [ "$need" -lt $((free - 65536)) ] ||
+	refuse "the root file system has ${free:-?} KiB free; /data needs ${need:-?} KiB and 64 MiB to spare"
 if [ "$cmd" = check ]; then
 	say "check OK: /data on userdata, the running slot $(echo "$SLOT" | tr a-z A-Z) (root system_$SLOT)"
 	exit 0
@@ -178,15 +195,16 @@ for e in "$DATA"/* "$DATA"/.[!.]* "$DATA"/..?*; do
 	[ -e "$e" ] || [ -L "$e" ] || continue
 	n=${e##*/}
 	case $n in lost+found) continue;; esac
-	skip=0
-	for d in $DIRS; do case $d in "$n"|"$n"/*) skip=1;; esac; done
-	if [ $skip = 1 ]; then
-		# the top folder of moved directories (var, root, home): only its
-		# directories of tsx-data go back (above)
-		continue
-	fi
+	top=0
+	for d in $DIRS; do case $d in "$n"|"$n"/*) top=1;; esac; done
 	if [ -d "$e" ] && [ ! -L "$e" ]; then copy_back "$e" "$RR/data/$n" || fail "the copy of $e"
 	else rm -rf "$RR/data/$n"; cp -a "$e" "$RR/data/$n" || fail "the copy of $e"; fi
+	if [ $top = 1 ]; then
+		# the top folder of tsx-data directories (var, root, home): the moved
+		# directories went to their places above; the rest stays under /data
+		for d in $moved; do case $d in "$n"/*|"$n") rm -rf "${RR:?}/data/$d";; esac; done
+		find "$RR/data/$n" -depth -type d -empty -delete 2>/dev/null
+	fi
 	say "/data/$n: on the root file system"
 done
 sync
@@ -195,8 +213,11 @@ RMOUNTED=
 sync
 say "all copies checked; setting the label $OLD on userdata (the last step)"
 $SETLABEL "$DATA" "$OLD" 2>> "$LOG" || fail "cannot set the label $OLD"
+# from here the services stay stopped: their writes would go to userdata,
+# which the next boot no longer mounts
+STOPPED=
 sync
-is_fs "$DEV" "$OLD" || say "WARNING: blkid does not show $OLD yet (it is in the journal; the restart writes it)"
+is_fs "$DEV" "$OLD" || say "note: blkid may show $DONE until the journal is written back at the restart; a boot that mounts it then finds $OLD and tsx-data leaves it alone"
 trap - INT TERM HUP
-say "done: restart now. The next boot mounts no /data; then run: uc-pxx-data-release wipe --yes"
+say "done: restart now (the panel services stay stopped until then). The next boot mounts no /data; then run: uc-pxx-data-release wipe --yes"
 exit 0

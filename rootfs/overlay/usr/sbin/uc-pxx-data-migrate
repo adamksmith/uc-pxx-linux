@@ -51,11 +51,15 @@
 #   6. as the last step: the label tsxdata (the ioctl FS_IOC_SETFSLABEL of the
 #      mounted file system), unmount, e2fsck -n, blkid must show tsxdata.
 # It never deletes or changes the data of the root file system, and it writes
-# no partition other than userdata. On a failure it starts the stopped
-# services again.
+# no partition other than userdata. On a failure before the label it starts
+# the stopped services again; after the label (a finished /data, exit 4) it
+# does not: restart the unit.
 #
-# Preflight of both (also `check`): the partition with the GPT name userdata is
-# mmcblk0p28 (start 16811008, 13724639 sectors) on the eMMC; the system runs
+# Preflight of both (also `check`): userdata is not a finished /data (exit 4,
+# also when it is mounted); the partition with the GPT name userdata is
+# mmcblk0p28 (start 16811008, 13724639 sectors) on the eMMC, not mounted (by
+# name or major:minor), not held, and an O_EXCL open works; the other slot is
+# disabled {0,0,0} (uc-pxx-bootctl status: step 2 disables it first); the system runs
 # from a slot boot (uc-pxx-slot a or b) with its root on system_<slot>; the
 # fstab of the running system mounts nothing by LABEL= (the build of review
 # F7); no other run holds /run/uc-pxx-data.lock.
@@ -66,7 +70,8 @@
 # is a finished /data (tsxdata): refused, nothing written.
 #
 # Test hooks: TSX_SYSBLOCK (/sys/class/block), TSX_DEVDIR (/dev), TSX_MOUNTS
-# (/proc/mounts), UC_PXX_MOUNTINFO (/proc/self/mountinfo), UC_PXX_SLOT
+# (/proc/mounts), UC_PXX_MOUNTINFO (/proc/self/mountinfo), TSX_BOOTCTL
+# (uc-pxx-bootctl, read only: status), UC_PXX_SLOT
 # (uc-pxx-slot), UC_PXX_SRC (/: the tree of the running system that migrate
 # reads), UC_PXX_FSTAB (/etc/fstab), UC_PXX_RUN (/run), UC_PXX_RC_SERVICE
 # (rc-service), UC_PXX_USERDATA_START, UC_PXX_USERDATA_SECTORS,
@@ -85,7 +90,10 @@ RCS=${UC_PXX_RC_SERVICE:-rc-service}
 UD_NAME=userdata UD_DEV=mmcblk0p28
 UD_START=${UC_PXX_USERDATA_START:-16811008}
 UD_SECTORS=${UC_PXX_USERDATA_SECTORS:-13724639}
-SERVICES=${UC_PXX_MIGRATE_SERVICES-tsx-kiosk tsx-voice tsx-sendspin tsx-esphome tsx-mqtt tsx-setup crond syslog}
+# the services that write the panel data (the OpenRC names of the image: kiosk
+# is Chromium); step 2 needs the network and sshd, which stay
+SERVICES=${UC_PXX_MIGRATE_SERVICES-kiosk tsx-panel-app tsx-panelctl tsx-setupd tsx-setup-helper tsx-setup tsx-autoupdate tsx-buttons tsx-bt tsx-idled tsx-ledbar tsx-voice tsx-sendspin tsx-esphome tsx-mqtt crond syslog}
+BOOTCTL=${TSX_BOOTCTL:-/usr/sbin/uc-pxx-bootctl}
 # the directories of tsx-data (all that any profile moves; one that a root
 # file system does not have is left out)
 DIRS="var/lib/kiosk var/log var/lib/tsx var/lib/sendspin var/lib/tsx-voice root home"
@@ -104,6 +112,11 @@ finished() { say "REFUSED: userdata is a finished /data (ext4 $DONE): nothing to
 fail() {
 	say "FAILED: $*"
 	if [ -n "${MOUNTED:-}" ]; then umount "$MNT" 2>/dev/null || umount -l "$MNT" 2>/dev/null; fi
+	if [ -n "${LABELLED:-}" ] || [ "$(state "$DEV")" = finished ]; then
+		# the label step was reached: every copy was complete and synced before it
+		say "userdata IS a finished /data (ext4 $DONE): every copy was complete before the label. Restart; do not start the services again"
+		exit 4
+	fi
 	start_again
 	say "userdata is not a finished /data and nothing mounts it. The data of this slot is unchanged. Run format and migrate again."
 	exit 3
@@ -128,11 +141,27 @@ state() {
 	fi
 	echo other
 }
-in_use() {   # DEV: mounted (by its path or its real path) or held (dm, md)
+in_use() {   # DEV: mounted (by its path, its real path or its major:minor) or held (dm, md, an exclusive open)
 	_r=$(readlink -f "$1" 2>/dev/null || echo "$1")
 	awk -v a="$1" -v b="$_r" '$1 == a || $1 == b { f = 1 } END { exit !f }' "$MOUNTS" 2>/dev/null && return 0
+	_n=$(cat "$SYSB/$UD_DEV/dev" 2>/dev/null)
+	[ -n "$_n" ] && awk -v n="$_n" '$3 == n { f = 1 } END { exit !f }' /proc/self/mountinfo 2>/dev/null && return 0
 	[ -d "$SYSB/$UD_DEV/holders" ] && [ -n "$(ls -A "$SYSB/$UD_DEV/holders" 2>/dev/null)" ] && return 0
+	# the kernel's own test: an O_EXCL open of a block device fails while it is mounted or held
+	if [ -b "$_r" ]; then
+		python3 -I -c 'import os, sys; os.close(os.open(sys.argv[1], os.O_RDONLY | os.O_EXCL))' "$_r" 2>/dev/null || return 0
+	fi
 	return 1
+}
+# other_disabled: the other slot (the target of step 2) is disabled {0,0,0}
+# (uc-pxx-bootctl status, read only). Step 2 disables it before any write, so
+# a format never erases the data of a slot that can still boot (Android).
+other_disabled() {
+	_o=$("$BOOTCTL" status 2>&1) || return 1
+	_c=$(printf '%s\n' "$_o" | sed -n 's/^.*current: A{prio \([0-9]*\) tries \([0-9]*\) succ \([0-9]*\)} B{prio \([0-9]*\) tries \([0-9]*\) succ \([0-9]*\)}.*$/\1 \2 \3 \4 \5 \6/p' | head -n 1)
+	[ -n "$_c" ] || return 1
+	set -- $_c
+	if [ "$SLOT" = a ]; then [ "$4 $5 $6" = "0 0 0" ]; else [ "$1 $2 $3" = "0 0 0" ]; fi
 }
 
 # preflight: sets DEV (userdata) and SLOT; refuses with exit 1
@@ -155,8 +184,11 @@ preflight() {
 	[ -n "$want" ] && [ "$got" = "$want" ] || refuse "the root file system (${got:-unknown}) is not system_$SLOT (${want:-unknown}): the running slot is not the one U-Boot started"
 	grep -v '^[[:space:]]*#' "$FSTAB" 2>/dev/null | grep -Eq '(^|[[:space:]])(LABEL|UUID)=' &&
 		refuse "$FSTAB of the running system mounts by LABEL= or UUID=: step 2 needs the label-free build (review F7)"
-	in_use "$DEV" && refuse "$DEV ($UD_NAME) is mounted or held"
 	STATE=$(state "$DEV")
+	# a finished /data refuses first (exit 4), also when it is mounted (the normal state after step 2)
+	[ "$STATE" = finished ] && finished
+	in_use "$DEV" && refuse "$DEV ($UD_NAME) is mounted or held"
+	other_disabled || refuse "the other slot is not disabled {0,0,0} (uc-pxx-bootctl status): step 2 disables it before the data steps; userdata may still be the data of a slot that boots"
 	say "userdata $DEV: $STATE; the running slot: $(echo "$SLOT" | tr a-z A-Z), root system_$SLOT"
 }
 
@@ -169,6 +201,7 @@ fw_check() {
 # ---------------------------------------------------------- services ---
 stop_services() {
 	for s in $SERVICES; do
+		"$RCS" -e "$s" > /dev/null 2>&1 || { say "$s: not installed"; continue; }
 		"$RCS" -q "$s" status > /dev/null 2>&1 || continue
 		if "$RCS" -q "$s" stop > /dev/null 2>&1; then STOPPED="$STOPPED $s"; say "stopped $s"
 		else say "WARNING: cannot stop $s"; fi
@@ -223,6 +256,9 @@ do_migrate() {
 	stop_services
 	e2fsck -p "$DEV" >> "$LOG" 2>&1; rc=$?
 	[ $rc -lt 4 ] || fail "e2fsck -p of $DEV gave $rc"
+	# a cut after the label of an earlier run: the journal held tsxdata, and
+	# e2fsck -p replayed it. That run had finished all copies.
+	[ "$(state "$DEV")" = finished ] && { start_again; finished; }
 	mkdir -p "$MNT"
 	mount -t ext4 -o rw,noatime "$DEV" "$MNT" 2>> "$LOG" || fail "cannot mount $DEV on $MNT"
 	MOUNTED=1
@@ -274,6 +310,7 @@ do_migrate() {
 	# 5. the last step: the label
 	say "all copies checked; setting the label $DONE (the last step)"
 	$SETLABEL "$MNT" "$DONE" 2>> "$LOG" || fail "cannot set the label $DONE"
+	LABELLED=1 STOPPED=
 	sync
 	umount "$MNT" || fail "cannot unmount $MNT"
 	MOUNTED=
@@ -289,7 +326,10 @@ do_format() {
 	[ "$STATE" = finished ] && finished
 	trap 'fail "a signal stopped the format"' INT TERM HUP
 	say "formatting $DEV: Android's data (or what userdata holds) is erased now"
-	# util-linux blkdiscard needs -f on a device with a file system; the busybox one has no -f
+	# util-linux blkdiscard needs -f on a device with a file system (and then
+	# drops its exclusive open: in_use above made the O_EXCL test); the busybox
+	# one has no -f
+	in_use "$DEV" && refuse "$DEV ($UD_NAME) is mounted or held"
 	blkdiscard -f "$DEV" >> "$LOG" 2>&1 || blkdiscard "$DEV" >> "$LOG" 2>&1 ||
 		say "WARNING: blkdiscard of $DEV failed (zeroing the first and last MiB anyway)"
 	dd if=/dev/zero of="$DEV" bs=512 count=2048 conv=fsync 2>> "$LOG" || fail "cannot zero the first MiB"

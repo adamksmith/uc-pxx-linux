@@ -16,7 +16,7 @@ At every step at least one slot must stay bootable.
 | `uc-pxx-mark-boot` | `/etc/uc-pxx-mark-boot.sh` | Marks slot A as good after a healthy boot |
 | `uc-pxx-flash-boot` | `/usr/sbin/uc-pxx-flash-boot` | Sets slot A to "trying", writes `boot_a` and checks the data |
 | `uc-pxx-arm-slot` | `/usr/sbin/uc-pxx-arm-slot` | Sets slot A to "trying" before an update changes `system_a` or `boot_a` |
-| `uc-pxx-slot` | `/usr/sbin/uc-pxx-slot` | Prints the slot that U-Boot started (`a` or `b`), from `androidboot.slot_suffix` in `/proc/device-tree/chosen/u-boot,bootargs`. Exit 1 on a RAM boot (no such property) and on none or more than one such word. Writes nothing |
+| `uc-pxx-slot` | `/usr/sbin/uc-pxx-slot` | Prints the slot that U-Boot started (`a` or `b`), from `androidboot.slot_suffix` in `/proc/device-tree/chosen/u-boot,bootargs`. Exit 1 on a RAM boot (no such property), exit 2 on none or more than one such word or another value. Writes nothing |
 | `uc-pxx-update-boot` | `/usr/sbin/uc-pxx-update-boot` | Package `uc-pxx-boot-tools` (tsx-aports). Puts the stock resource of `boot_b` into the image of `uc-pxx-kernel-lts` and writes `boot_a` through `uc-pxx-arm-slot` and `uc-pxx-flash-boot`. See below |
 | `uc-pxx-post-update` | `/usr/sbin/uc-pxx-post-update` | The board step of `tsx-autoupdate` after an install: checks the reviewed files, runs `uc-pxx-arm-slot` and `uc-pxx-update-boot write --yes`, and checks the A/B state. See "Kernel updates" |
 
@@ -365,7 +365,14 @@ checksums before they write the metadata sector on a panel.
 - The hook must not mark a boot after a kernel oops.
 - Phase 2 needs the tool for both slots. See [boot.md](boot.md). The mark
   works for both slots (`--expect a|b`, the token of `boot_a` or `boot_b`);
-  `arm-trying` and the updaters are for slot A only, and `uc-pxx-arm-slot`
-  and `uc-pxx-flash-boot` refuse when the running system is slot B (its
-  updates go into `system_b`, so a new kernel in `boot_a` would not match
-  `system_a`).
+  `arm-trying` and the updaters are for slot A only. `uc-pxx-arm-slot`
+  and `uc-pxx-flash-boot` have the same slot-A guard, before the lock, the
+  marker and any write: they run only when the U-Boot command line names
+  slot A (one `androidboot.slot_suffix=_a`, read with the rule of
+  `uc-pxx-slot`) or there is no `u-boot,bootargs` at all (a RAM boot), and
+  only when the running root file system (`/proc/self/mountinfo`) is the
+  partition named `system_a`. Slot B (its updates go into `system_b`, so a
+  new kernel in `boot_a` would not match `system_a`), a slot word that cannot
+  be read, or another root: refused (exit 1). So in a boot of slot B the
+  pre-update hook of tsx-autoupdate refuses and nothing is installed, and
+  `uc-pxx-post-update` (by hand) ends with 1, nothing written.

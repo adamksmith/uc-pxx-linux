@@ -8,8 +8,9 @@
 # no /data on userdata has neither: the tools refuse. They never use a file
 # system by its label alone.
 export TSX_DATA_FINDFS=/usr/sbin/uc-pxx-findfs
-# the two labels are fixed here: uc-pxx-findfs maps each to one partition
-unset TSX_DATA_LABEL TSX_ROOTFS_LABEL
+# the two labels are fixed here (uc-pxx-findfs maps each to one partition),
+# and no test hook of the tools may point them elsewhere (review R1-3)
+unset TSX_DATA_LABEL TSX_ROOTFS_LABEL TSX_DATA_MOUNTS TSX_SYSBLOCK TSX_DEVDIR UC_PXX_SLOT UC_PXX_BLKID
 case ${0##*/} in
 tsx-data-restore) exec /usr/libexec/tsx-rescue/tsx-data-backup --restore "$@";;
 esac

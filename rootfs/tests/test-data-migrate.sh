@@ -60,6 +60,7 @@ printf '#!/bin/sh\n[ -e "%s/slotrc" ] && exit "$(cat "%s/slotrc")"\ncat "%s/slot
 cat > "$T/bin/rc-service" <<EOF
 #!/bin/sh
 [ "\$1" = -q ] && shift
+if [ "\$1" = -e ]; then grep -qx "\$2" "$T/installed"; exit; fi
 echo "\$2 \$1" >> "$T/rc.log"
 case \$2 in
 status) grep -qx "\$1" "$T/started";;
@@ -67,7 +68,18 @@ stop) grep -vx "\$1" "$T/started" > "$T/started.n"; mv "$T/started.n" "$T/starte
 start) echo "\$1" >> "$T/started";;
 esac
 EOF
+# uc-pxx-bootctl status: the A/B state in $T/ab ("A B": prio,tries,succ each)
+cat > "$T/bin/bootctl" <<EOF
+#!/bin/sh
+set -- \$(tr ', ' '  ' < "$T/ab")
+echo "uc-pxx-bootctl: current: A{prio \$1 tries \$2 succ \$3} B{prio \$4 tries \$5 succ \$6} crc 1" >&2
+EOF
+# the phase-1 volume group (release refuses it): exit 0 when $T/vg exists
+printf '#!/bin/sh\n[ -e "%s/vg" ]\n' "$T" > "$T/bin/lvm"
 chmod 755 "$T/bin"/*
+printf 'kiosk\ntsx-voice\nsyslog\n' > "$T/installed"
+ab() { echo "$1 $2" > "$T/ab"; }
+ab 15,0,1 0,0,0
 printf '# no label lines\ntmpfs /tmp tmpfs nosuid 0 0\n' > "$T/fstab"
 slot() { echo "$1" > "$T/slot"; rm -f "$T/slotrc"; printf '22 1 179:%s / / rw - ext4 /dev/root rw\n' "$2" > "$T/mountinfo"; }
 slot a 22
@@ -86,9 +98,9 @@ mksrc() {
 	echo bt > "$R/lib/firmware/brcm/BCM4345C5.hcd"
 }
 mksrc
-printf 'tsx-kiosk\nsyslog\n' > "$T/started"
-export TSX_SYSBLOCK=$S TSX_DEVDIR=$D UC_PXX_MOUNTINFO=$T/mountinfo UC_PXX_SLOT=$T/bin/uc-pxx-slot UC_PXX_SRC=$T/src \
-	UC_PXX_FSTAB=$T/fstab UC_PXX_RUN=$T/run UC_PXX_RC_SERVICE=$T/bin/rc-service UC_PXX_MIGRATE_SERVICES="tsx-kiosk tsx-voice syslog"
+printf 'kiosk\nsyslog\n' > "$T/started"
+export TSX_BOOTCTL=$T/bin/bootctl UC_PXX_LVM=$T/bin/lvm TSX_SYSBLOCK=$S TSX_DEVDIR=$D UC_PXX_MOUNTINFO=$T/mountinfo UC_PXX_SLOT=$T/bin/uc-pxx-slot UC_PXX_SRC=$T/src \
+	UC_PXX_FSTAB=$T/fstab UC_PXX_RUN=$T/run UC_PXX_RC_SERVICE=$T/bin/rc-service UC_PXX_MIGRATE_SERVICES="kiosk tsx-voice tsx-notinstalled syslog"
 mig() { sh "$MIG" "$@" > "$T/out" 2> "$T/err"; echo $?; }
 rel() { sh "$REL" "$@" > "$T/out" 2> "$T/err"; echo $?; }
 ud_sha() { head -c 1048576 "$LU" | sha256sum | cut -d' ' -f1; }
@@ -129,6 +141,11 @@ echo SD > "$S/mmcblk0/device/type"; refuse "not an eMMC" format --yes; echo MMC 
 mv "$S/mmcblk0p28" "$S/mmcblk0p27"; ln -s "$LU" "$D/mmcblk0p27"; refuse "userdata on another partition number" format --yes
 mv "$S/mmcblk0p27" "$S/mmcblk0p28"; rm "$D/mmcblk0p27"
 ( flock -n 9 && sleep 3 ) 9> "$T/run/uc-pxx-data.lock" & sleep 1; refuse "another run holds the lock" format --yes; wait
+ab 15,0,1 14,0,1; refuse "the other slot (B) is not disabled (Android B still boots)" format --yes
+ab 15,0,1 14,7,0; refuse "the other slot (B) is trying" format --yes
+slot b 23; ab 0,0,0 15,0,1; rc=$(mig check); [ "$rc" = 0 ] && ok "slot B running, A disabled: check passes" || bad "slot B check (rc $rc, $(tail -n 1 "$T/err"))"
+slot b 23; ab 15,0,1 14,0,1; refuse "slot B running, A not disabled" format --yes
+slot a 22; ab 15,0,1 0,0,0
 
 echo "== format =="
 eq "$(mig format --yes)" "0" "format: exit 0"
@@ -159,14 +176,32 @@ eq "$(mig migrate --yes)" "1" "a missing vendor file: refused"
 mv "$T/bt.save" "$T/src/lib/firmware/brcm/BCM4345C5.hcd"
 
 echo "== a migrate that fails at the last step (a cut before the label) =="
-printf 'tsx-kiosk\nsyslog\n' > "$T/started"; : > "$T/rc.log"
+printf 'kiosk\nsyslog\n' > "$T/started"; : > "$T/rc.log"
 eq "$(UC_PXX_SETLABEL=false mig migrate --yes)" "3" "the label step fails: exit 3"
 eq "$(lab)" "tsxdata-new" "still tsxdata-new: nothing mounts it"
-grep -q '^stop tsx-kiosk$' "$T/rc.log" && grep -q '^stop syslog$' "$T/rc.log" && ok "the running services were stopped" || bad "services not stopped ($(cat "$T/rc.log"))"
+grep -q '^stop kiosk$' "$T/rc.log" && grep -q '^stop syslog$' "$T/rc.log" && ok "the running services were stopped" || bad "services not stopped ($(cat "$T/rc.log"))"
 grep -q '^stop tsx-voice$' "$T/rc.log" && bad "a service that did not run was stopped" || ok "a service that did not run is left alone"
-grep -q '^start tsx-kiosk$' "$T/rc.log" && grep -q '^start syslog$' "$T/rc.log" && ok "after the failure the services run again" || bad "services not started again"
+grep -q '^start kiosk$' "$T/rc.log" && grep -q '^start syslog$' "$T/rc.log" && ok "after the failure the services run again" || bad "services not started again"
 eq "$(lvm_svc "$T/data1")" "" "after the failed run: /data is still not mounted"
 mount "$LU" "$T/m"; echo junk > "$T/m/junk"; mkdir -p "$T/m/var/log"; echo stale > "$T/m/var/log/stale"; umount "$T/m"
+
+echo "== a failure after the label: a finished /data (exit 4), the services stay stopped =="
+cat > "$T/bin/label-then-fail" <<'LTF'
+#!/bin/sh
+python3 -I -c '
+import fcntl, os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY)
+fcntl.ioctl(fd, 0x41009432, sys.argv[2].encode() + bytes(256 - len(sys.argv[2])))
+os.fsync(fd)' "$1" "$2"
+exit 1
+LTF
+chmod 755 "$T/bin/label-then-fail"
+mkfs.ext4 -q -F -L tsxdata-new "$LU"
+printf 'kiosk\nsyslog\n' > "$T/started"; : > "$T/rc.log"
+eq "$(UC_PXX_SETLABEL=$T/bin/label-then-fail mig migrate --yes)" "4" "the label set, then a failure: exit 4 (a finished /data, not 'run again')"
+grep -q 'IS a finished /data' "$T/err" && ok "the message says it is finished" || bad "the message after the label ($(tail -n 1 "$T/err"))"
+grep -q '^start ' "$T/rc.log" && bad "the services were started again after the label" || ok "the services stay stopped after the label"
+mkfs.ext4 -q -F -L tsxdata-new "$LU"
 
 echo "== migrate =="
 SRC0=$(tdig "$T/src")
@@ -197,6 +232,7 @@ S2=$(ud_sha)
 eq "$(mig format --yes)" "4" "format of a finished /data: exit 4"
 eq "$(mig migrate --yes)" "4" "migrate of a finished /data: exit 4"
 eq "$(mig check)" "4" "check of a finished /data: exit 4"
+mount -o ro "$LU" "$T/m2"; eq "$(mig format --yes)" "4" "format of a finished, mounted /data: exit 4 (not 1)"; umount "$T/m2"
 [ "$(ud_sha)" = "$S2" ] && [ "$(lab)" = tsxdata ] && ok "nothing written" || bad "a refusal wrote"
 
 echo "== both slots mount it (uc-pxx-lvm) =="
@@ -207,7 +243,7 @@ umount "$T/data2"
 
 echo "== resume: a userdata formatted again and migrated from slot B =="
 mkfs.ext4 -q -F -L tsxdata-new "$LU"
-slot b 23
+slot b 23; ab 0,0,0 15,0,1
 mksrc
 # the phase-1 layout: tsx-data moved /var/log into /data before (marker), the
 # root file system copy is empty
@@ -217,12 +253,14 @@ mnt
 eq "$(cat "$T/m/var/log/messages")" "moved log" "a folder tsx-data moved before: the /data copy, not the empty root copy"
 grep -q '^from slot b (root system_b)' "$T/m/uc-pxx/data-migrate.txt" && ok "the record names slot B" || bad "the record of slot B"
 umnt
-slot a 22
+slot a 22; ab 15,0,1 0,0,0
 
 echo "== uc-pxx-data-release: copy back, then wipe =="
 mount "$LU" "$T/data1"
 mount "$LR" "$T/m"; mkdir -p "$T/m/var/log" "$T/m/data"; echo old > "$T/m/var/log/messages"; umount "$T/m"
 export UC_PXX_DATA=$T/data1
+mkdir -p "$T/data1/var/lib/other"; echo keep > "$T/data1/var/lib/other/f"
+: > "$T/vg"; eq "$(rel copy --yes)" "1" "release with the phase-1 volume group tsx: refused (its old /data would come back)"; rm -f "$T/vg"
 eq "$(rel check)" "0" "release check: exit 0"
 eq "$(rel wipe --yes)" "1" "wipe while userdata is tsxdata: refused"
 eq "$(rel copy --yes)" "0" "release copy: exit 0"
@@ -233,7 +271,8 @@ mount "$LR" "$T/m"
 eq "$(cat "$T/m/var/log/messages")" "moved log" "the root file system has the data of /data again"
 [ ! -e "$T/m/var/log/.tsx-moved" ] && ok "without the marker of tsx-data" || bad "the marker stayed on the root file system"
 eq "$(cat "$T/m/data/tsx/panel.conf")" "UPDATE_MODE=manual" "/data/tsx/panel.conf is on the root file system"
-[ ! -e "$T/m/data/var" ] && ok "the moved folders are not copied twice under /data" || bad "/data/var on the root file system"
+[ ! -e "$T/m/data/var/log" ] && [ ! -e "$T/m/data/var/lib/kiosk" ] && ok "the moved folders are not copied twice under /data" || bad "moved folders under /data/var on the root file system"
+eq "$(cat "$T/m/data/var/lib/other/f" 2>/dev/null)" "keep" "content under /data/var outside the tsx-data folders goes back to /data/var (R2-7)"
 umount "$T/m"
 eq "$(rel copy --yes)" "1" "copy again (userdata not tsxdata): refused"
 eq "$(rel wipe --yes)" "0" "wipe: exit 0"

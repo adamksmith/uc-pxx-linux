@@ -47,5 +47,13 @@ printf 'other\n' > "$T/other"; export UC_PXX_STEP2_BOOTCTL_INST=$T/other
 rc=$(step true); [ "$rc" != 0 ] && grep -q 'the reviewed r2 binary is' "$T/out" && ok "on, another binary: the build stops" || bad "on with another binary: rc $rc"
 unset UC_PXX_STEP2_BOOTCTL_INST
 
+echo "== the fstab step of mkrootfs.sh (an older uc-pxx-lvm, review R1-1) =="
+sed -n '/^# The fstab of this repository has no \/data line/,/^# (end of the fstab step)$/p' "$MK" > "$T/fstab-step.sh"
+[ -s "$T/fstab-step.sh" ] && ok "the fstab step is found" || bad "the fstab step is not found"
+fstep() { rm -rf "$T/R"; mkdir -p "$T/R/etc/init.d"; cp "$HERE/overlay/etc/fstab" "$T/R/etc/fstab"; "$@"; ( log() { :; }; R=$T/R; . "$T/fstab-step.sh" ) > /dev/null 2>&1; grep -v '^#' "$T/R/etc/fstab" | awk '$2 == "/data" { print $1 }'; }
+[ "$(fstep cp "$HERE/overlay/etc/init.d/uc-pxx-lvm" "$T/R/etc/init.d/")" = "" ] && ok "the uc-pxx-lvm of this repository: no /data line" || bad "a /data line with the new service"
+[ "$(fstep sh -c "printf '#!/sbin/openrc-run\nstart() { :; }\n' > $T/R/etc/init.d/uc-pxx-lvm")" = "LABEL=tsxdata" ] && ok "an older uc-pxx-lvm (no marker): the old /data line comes back" || bad "no compat line for an older service"
+[ "$(fstep true)" = "" ] && ok "no uc-pxx-lvm at all: no /data line" || bad "a /data line without the service"
+
 echo "$N ok, $F failed"
 [ "$F" = 0 ]

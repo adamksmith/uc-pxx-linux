@@ -240,6 +240,21 @@ log "image files ($PROFILE)"
 # The packages own the files of the panel software. The image keeps only its
 # own files (profiles/image.list).
 sh "$HERE/profile.sh" stage "$PROFILE" $R
+# The fstab of this repository has no /data line (review F7): the service
+# uc-pxx-lvm of the package uc-pxx-board mounts /data by device (its line
+# "# uc-pxx-data-mount: 1"). An older package only activates the LVM volume
+# group and relies on the fstab. Then the image gets the old /data line back,
+# so it mounts /data as before; such an image is not a both-slot build, and
+# step 2 (uc-pxx-data-migrate) refuses a running fstab with LABEL= (review
+# R1-1 of MAINLINE-LINUX-INT-REVIEW-1.md).
+if [ -e $R/etc/init.d/uc-pxx-lvm ] && ! grep -qx '# uc-pxx-data-mount: 1' $R/etc/init.d/uc-pxx-lvm; then
+	if ! grep -v '^[[:space:]]*#' $R/etc/fstab | awk '$2 == "/data"' | grep -q .; then
+		printf '%s\n' '# added by mkrootfs.sh: the uc-pxx-lvm of this image does not mount /data itself (an older uc-pxx-board)' \
+			'LABEL=tsxdata   /data         ext4    rw,noatime,commit=60,nofail 0      0' >> $R/etc/fstab
+		log "WARNING: the package uc-pxx-lvm does not mount /data: the fstab gets the old LABEL=tsxdata line (not a both-slot image)"
+	fi
+fi
+# (end of the fstab step)
 mkdir -p $R/data   # the data partition's mount point (fstab, tsx-data)
 # the build's repository URL: tsx-config apply falls back to it when
 # panel.conf has no APK_URL

@@ -124,6 +124,14 @@ jobs:
         run: sh packages/uc-pxx-leds/tests/test-plugin.sh
         env:
           TSX_COMMON: ${{ github.workspace }}/tsx-linux-common
+      - name: rootfs/tests/test-rescue-slot.sh - the rescue login and backup of tsx-linux-common with uc-pxx-findfs
+        run: busybox sh rootfs/tests/test-rescue-slot.sh
+        env:
+          TSX_COMMON: ${{ github.workspace }}/tsx-linux-common
+      - name: rootfs/tests/test-data-mount.sh - the service names of the data tools against tsx-linux-common
+        run: busybox sh rootfs/tests/test-data-mount.sh
+        env:
+          TSX_COMMON: ${{ github.workspace }}/tsx-linux-common
       - name: rootfs/tests/test-autoupdate-hooks.sh - the board hooks with tsx-autoupdate (SKIPPED with a tsx-autoupdate that has no post-update hook)
         run: sh rootfs/tests/test-autoupdate-hooks.sh
         env:

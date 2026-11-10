@@ -15,7 +15,10 @@
 # tsxdata-new (a step 2 that has not finished its migration). The service
 # never fails the boot. Log: /run/uc-pxx-lvm.log. (The name stays uc-pxx-lvm
 # until the package uc-pxx-board renames it to uc-pxx-data.)
-# Test hooks: TSX_SYSBLOCK, TSX_DEVDIR, UC_PXX_DATA_MNT, UC_PXX_MOUNTS.
+# Test hooks: TSX_SYSBLOCK, TSX_DEVDIR, UC_PXX_DATA_MNT, UC_PXX_MOUNTS,
+# UC_PXX_USERDATA_START, UC_PXX_USERDATA_SECTORS.
+# rootfs/mkrootfs.sh reads the next line: this service mounts /data itself.
+# uc-pxx-data-mount: 1
 description="Mount /data: userdata (phase 2) or the LVM data volume (phase 1), ext4 label tsxdata only"
 depend() {
 	after udev-settle modules
@@ -29,12 +32,19 @@ DEVD=${TSX_DEVDIR:-/dev}
 MNT=${UC_PXX_DATA_MNT:-/data}
 MOUNTS=${UC_PXX_MOUNTS:-/proc/mounts}
 OPTS=rw,noatime,commit=60
+UD_START=${UC_PXX_USERDATA_START:-16811008}
+UD_SECTORS=${UC_PXX_USERDATA_SECTORS:-13724639}
 
-# data_part NAME: the device of the eMMC partition with that GPT name
+# data_part: the device of the eMMC partition with the GPT name userdata, at
+# the start and with the size of the UC-P10 layout (mmcblk0p28)
 data_part() {
 	for _u in "$SYSB"/mmcblk*p*/uevent; do
-		[ -r "$_u" ] && grep -qx "PARTNAME=$1" "$_u" || continue
-		_d=${_u%/uevent}; echo "$DEVD/${_d##*/}"; return 0
+		[ -r "$_u" ] && grep -qx "PARTNAME=userdata" "$_u" || continue
+		_d=${_u%/uevent}; _n=${_d##*/}
+		[ "$_n" = mmcblk0p28 ] && [ "$(cat "$_d/start" 2>/dev/null)" = "$UD_START" ] &&
+			[ "$(cat "$_d/size" 2>/dev/null)" = "$UD_SECTORS" ] || return 1
+		case $(cat "$SYSB/${_n%p*}/device/type" 2>/dev/null) in MMC*) ;; *) return 1;; esac
+		echo "$DEVD/$_n"; return 0
 	done
 	return 1
 }
@@ -61,7 +71,7 @@ start() {
 		einfo "uc-pxx-lvm: $MNT is mounted already"
 		eend 0; return 0
 	fi
-	if ud=$(data_part userdata) && is_tsxdata "$ud"; then
+	if ud=$(data_part) && is_tsxdata "$ud"; then
 		echo "userdata $ud: ext4 tsxdata (phase 2); the volume group $VG is not activated" >> "$LOG"
 		mount_data "$ud" "userdata"
 		eend 0; return 0

@@ -178,7 +178,9 @@ initramfs` makes it as the uncompressed cpio archive
    `/proc/device-tree/chosen/u-boot,bootargs`, and the root partition is the
    one with the GPT name `system_a` or `system_b`. A RAM boot has no such
    property: then `system_a`, as before. A property without one clear slot
-   word starts the rescue system. The root is found only by its GPT name,
+   word starts the rescue system (U-Boot always passes exactly one; if a unit
+   ever showed this rescue at each power-on, the way out is the loader mode
+   from the rescue, `uc-pxx-reboot loader`, and the installer). The root is found only by its GPT name,
    never by a label or a UUID: with mainline in both slots, `system_a` and
    `system_b` hold the same image, with the same label and the same UUID.
    Wait up to 15 seconds for it.

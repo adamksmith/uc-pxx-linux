@@ -25,6 +25,7 @@ for s in HOOK ARM; do
 	    -e "s#/proc/uptime#$T/uptime#g" -e "s#/proc/sys/kernel/tainted#$T/tainted#g" \
 	    -e "s#/dev/kmsg#$T/kmsg#g" -e "s#/sys/class/#$T/sys/#g" -e "s#/usr/sbin/uc-pxx-bootctl#$T/bin/uc-pxx-bootctl#g" \
 	    -e "s#/usr/sbin/uc-pxx-slot#$T/bin/uc-pxx-slot#g" -e "s#/proc/self/mountinfo#$T/mountinfo#g" \
+	    -e "s#/proc/device-tree/chosen/u-boot,bootargs#$T/ubootargs#g" \
 	    -e 's/^NET_WAIT_SECS=300/NET_WAIT_SECS=0/' "$src" > "$T/$s.sh"
 done
 printf '#!/bin/sh\nexec %s "$@" --file %s/sector --boot-file %s/boot.img\n' "$UC_PXX_BOOTCTL_RUN" "$T" "$T" > "$T/bin/uc-pxx-bootctl"
@@ -161,12 +162,25 @@ mv "$T/sys/block/mmcblk0p22/uevent.x" "$T/sys/block/mmcblk0p22/uevent"
 reset; mksector 15,0,1 14,0,1; rm -f "$T/bin/uc-pxx-slot.x"; mv "$T/bin/uc-pxx-slot" "$T/bin/uc-pxx-slot.x"
 PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
 mv "$T/bin/uc-pxx-slot.x" "$T/bin/uc-pxx-slot"
-{ [ $rc = 1 ] && [ "$(ab)" = " 15 0 1 0 14 0 1 0" ]; } && ok "no uc-pxx-slot program: refused" || bad "arm-slot without uc-pxx-slot (rc $rc, $(ab))"
+{ [ $rc = 0 ] && unchanged; } && ok "no uc-pxx-slot program, slot A: the guard reads the slot itself and arms (review R1-2)" || bad "arm-slot without uc-pxx-slot (rc $rc, $(ab))"
+reset; mksector 15,0,1 14,0,1; ubootargs _b; mv "$T/bin/uc-pxx-slot" "$T/bin/uc-pxx-slot.x"
+PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1; rc=$?
+mv "$T/bin/uc-pxx-slot.x" "$T/bin/uc-pxx-slot"
+{ [ $rc = 1 ] && [ "$(ab)" = " 15 0 1 0 14 0 1 0" ]; } && ok "no uc-pxx-slot program, slot B: still refused" || bad "arm-slot in slot B without uc-pxx-slot (rc $rc, $(ab))"
+# the guard's slot rule equals uc-pxx-slot's (the same words give the same answer)
+for w in "_a" "_b" "" "_a _a" "_a _b" "_c" "a"; do
+	set -f; ubootargs $w; set +f
+	g=$(sh "$T/bin/uc-pxx-slot" 2>/dev/null); gr=$?
+	case $gr:$g in 0:a) want=go;; *) want=refuse;; esac
+	mksector 15,0,1 14,0,1; rm -f "$T/run/"*
+	PATH="$T/bin:$PATH" sh "$T/ARM.sh" >/dev/null 2>&1 && got=go || got=refuse
+	[ "$got" = "$want" ] && ok "slot words '$w': the guard and uc-pxx-slot agree ($want)" || bad "slot words '$w': guard $got, uc-pxx-slot $gr:$g"
+done
 # the flash wrapper: the same guard, before the lock, the marker, the arm and the dd
 sed -n '/^# The slot-A guard/,/^	die "the running root file system/p' "$ARM" > "$T/guard-arm"
 sed -n '/^# The slot-A guard/,/^	die "the running root file system/p' "$FLASH" > "$T/guard-flash"
 { [ -s "$T/guard-arm" ] && cmp -s "$T/guard-arm" "$T/guard-flash"; } && ok "the flash wrapper has the same slot-A guard as uc-pxx-arm-slot" || bad "the slot-A guards of the two programs differ"
-gl=$(grep -n '^gs=$(/usr/sbin/uc-pxx-slot 2>/dev/null); grc=$?$' "$FLASH" | cut -d: -f1)
+gl=$(grep -n '^gp=/proc/device-tree/chosen/u-boot,bootargs$' "$FLASH" | cut -d: -f1)
 gl2=$(grep -n '^	die "the running root file system' "$FLASH" | cut -d: -f1)
 fl=$(grep -n -m1 -e '^exec 9>' -e '^arm "' -e '^dd ' -e '^: > /run' -e '^grep -q "PARTNAME=boot_a"' "$FLASH" | cut -d: -f1)
 { [ -n "$gl" ] && [ -n "$gl2" ] && [ -n "$fl" ] && [ "$gl" -lt "$fl" ] && [ "$gl2" -lt "$fl" ]; } && ok "the flash wrapper refuses before it changes or reads anything" || bad "the flash wrapper's guard is missing or late ($gl, $gl2, $fl)"
