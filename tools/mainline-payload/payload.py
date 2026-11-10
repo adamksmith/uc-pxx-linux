@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""The mainline payload (contract v1) of the UC-P10: checks, the boot image
+"""The mainline payload (contract v2) of the UC-P10: checks, the boot image
 assembly and the manifest. docs/mainline-payload.md tells the contract.
 
   payload.py check-template TEMPLATE PIN_FILE
@@ -19,18 +19,24 @@ assembly and the manifest. docs/mainline-payload.md tells the contract.
       Put RESOURCE into a copy of TEMPLATE as the "second" part, as
       kernel/mkimage.sh --resource RESOURCE makes it from the same inputs.
   payload.py manifest --version V --pin PIN_FILE --template F --resource F
-                      --assembled F --rootfs F --out MANIFEST [--allow-over-cap]
+                      --assembled F --rootfs F --vbmeta F --vbmeta-patched F
+                      --out MANIFEST [--allow-over-cap]
       Check every part and write manifest.json. ASSEMBLED must be the image of
       kernel/mkimage.sh --resource RESOURCE (build.sh makes it); the generator
       assembles the template again by itself and stops when the two differ.
+      VBMETA is the signed vbmeta of 1.0.0.94 userdebug, VBMETA_PATCHED the
+      output of vbmeta-patch.py patch: the generator checks that the two differ
+      only in the image_size field of the boot hash descriptor, which holds
+      the new cap, and that the patched file has the pinned sha256.
 
 Every refusal exits with status 1 and one line "payload: ...". An assembled
-image larger than the cap of the signed 1.0.0.94 vbmeta exits with status 3
-(the manifest is written only with --allow-over-cap).
+image larger than the boot cap of the patched vbmeta exits with status 3 (the
+manifest is written only with --allow-over-cap).
 
-The resource is the stock boot resource of the unit (a vendor file). This
-program reads it to compute the assembled image; it never copies it into the
-payload. Standard library only. Run with python3 -I.
+The resource and the two vbmeta files are vendor files. This program reads
+them to compute the assembled image and to check the patch; it never copies
+them into the payload: the manifest holds only their sha256 and sizes, and
+the installer makes the patched vbmeta again from the keeper's vbmeta_b. Standard library only. Run with python3 -I.
 """
 import hashlib
 import json
@@ -59,9 +65,17 @@ BOOTCHAIN = {
     "vbmeta_sha256": "7958c09b4fb6fb3d54a2382682074b4812e92cc1d81ca3183b20f03ff52f5f5c",
     "resource_sha256": RESOURCE_SHA256,
 }
-# image_size of the boot hash descriptor of the signed 1.0.0.94 userdebug
-# vbmeta (FIRMWARE-ALL37.md). libavb loads only this many bytes of boot_a.
-VBMETA_BOOT_CAP = 38029312
+# Contract v2: vbmeta_a is the signed 1.0.0.94 userdebug vbmeta with only the
+# image_size of its boot hash descriptor changed (vbmeta-patch.py). libavb
+# loads only image_size bytes of boot_a: the signed value is 38,029,312, the
+# patched value is 67,108,864 (the size of boot_a; unit 2's vbmeta_a since
+# 2026-10-24). The values are pinned here and in vbmeta-patch.py.
+SCHEMA = 2
+SIGNED_BOOT_IMAGE_SIZE = 38029312
+VBMETA_BOOT_CAP = 67108864
+VBMETA_SIZE = 8192
+VBMETA_FIELD_OFFSET = 1088
+VBMETA_PATCHED_SHA256 = "cebd4d8a68c8861b9801c4d83a14ab3d06f1d85b015a01686fae2d305a69f35e"
 ROOTFS_LABEL = "tsxroot"
 # kernel/mkimage.sh: header version 0, page 2048, the shim with the device
 # tree at 64 KiB and the Linux Image at 2 MiB, mkbootimg default offsets.
@@ -362,6 +376,28 @@ def cmd_assemble(a):
         f.write(out)
 
 
+MANIFEST_OPTS = ("--version", "--pin", "--template", "--resource", "--assembled", "--rootfs", "--vbmeta",
+                 "--vbmeta-patched", "--out")
+
+
+def check_vbmeta_patch(signed, patched):
+    """The patched vbmeta of contract v2: the pinned signed file with only the
+    8-byte image_size field of the boot hash descriptor changed to the cap."""
+    if len(signed) != VBMETA_SIZE or sha256(signed) != BOOTCHAIN["vbmeta_sha256"]:
+        raise Refuse("--vbmeta is %d bytes sha256 %s, not the signed 1.0.0.94 userdebug vbmeta %s" % (
+            len(signed), sha256(signed), BOOTCHAIN["vbmeta_sha256"]))
+    if len(patched) != VBMETA_SIZE or sha256(patched) != VBMETA_PATCHED_SHA256:
+        raise Refuse("--vbmeta-patched is %d bytes sha256 %s, not the pinned patched vbmeta %s" % (
+            len(patched), sha256(patched), VBMETA_PATCHED_SHA256))
+    o = VBMETA_FIELD_OFFSET
+    diff = [i for i in range(VBMETA_SIZE) if signed[i] != patched[i]]
+    if not diff or any(i < o or i >= o + 8 for i in diff):
+        raise Refuse("the patched vbmeta differs from the signed one outside bytes %d-%d" % (o, o + 7))
+    old, new = struct.unpack_from(">Q", signed, o)[0], struct.unpack_from(">Q", patched, o)[0]
+    if old != SIGNED_BOOT_IMAGE_SIZE or new != VBMETA_BOOT_CAP:
+        raise Refuse("the image_size field holds %d -> %d, not %d -> %d" % (old, new, SIGNED_BOOT_IMAGE_SIZE, VBMETA_BOOT_CAP))
+
+
 def cmd_manifest(a):
     opts, allow = {}, False
     i = 0
@@ -370,13 +406,13 @@ def cmd_manifest(a):
             allow = True
             i += 1
             continue
-        if a[i] not in ("--version", "--pin", "--template", "--resource", "--assembled", "--rootfs", "--out") or i + 1 >= len(a):
+        if a[i] not in MANIFEST_OPTS or i + 1 >= len(a):
             raise Refuse("manifest: unknown or incomplete option %s" % a[i])
         if a[i] in opts:
             raise Refuse("manifest: %s given twice" % a[i])
         opts[a[i]] = a[i + 1]
         i += 2
-    for k in ("--version", "--pin", "--template", "--resource", "--assembled", "--rootfs", "--out"):
+    for k in MANIFEST_OPTS:
         if k not in opts:
             raise Refuse("manifest: %s is required" % k)
     version = opts["--version"]
@@ -396,8 +432,10 @@ def cmd_manifest(a):
     if n["token"] != h["token"] or mine[n["second_off"]:n["second_off"] + n["second_size"]] != res:
         raise Refuse("the assembled image does not carry the token and the resource")
     rsize, rsha = check_rootfs(opts["--rootfs"])
+    vsigned, vpatched = read(opts["--vbmeta"]), read(opts["--vbmeta-patched"])
+    check_vbmeta_patch(vsigned, vpatched)
     man = {
-        "schema": 1,
+        "schema": SCHEMA,
         "kind": "uc-pxx-mainline",
         "version": version,
         "model": MODEL,
@@ -407,11 +445,16 @@ def cmd_manifest(a):
         "boot_assembled": {"resource_sha256": RESOURCE_SHA256, "size": len(mine), "sha256": sha256(mine)},
         "rootfs": {"file": "rootfs.ext4", "size": rsize, "sha256": rsha, "label": ROOTFS_LABEL},
         "requires_bootchain": dict(BOOTCHAIN),
+        "vbmeta_patched": {"source_sha256": BOOTCHAIN["vbmeta_sha256"], "size": VBMETA_SIZE,
+                           "sha256": VBMETA_PATCHED_SHA256, "field_offset": VBMETA_FIELD_OFFSET,
+                           "boot_image_size": VBMETA_BOOT_CAP},
         "vbmeta_boot_cap": VBMETA_BOOT_CAP,
     }
     over = len(mine) - VBMETA_BOOT_CAP
     print("boot template %d bytes, sha256 %s, token %s, kernel %s" % (len(tpl), sha256(tpl), h["token"], h["release"]))
     print("boot assembled %d bytes, sha256 %s" % (len(mine), sha256(mine)))
+    print("vbmeta patched sha256 %s (boot image_size %d -> %d at byte %d)" % (VBMETA_PATCHED_SHA256,
+          SIGNED_BOOT_IMAGE_SIZE, VBMETA_BOOT_CAP, VBMETA_FIELD_OFFSET))
     print("vbmeta boot cap %d bytes: %s" % (VBMETA_BOOT_CAP,
           "fits, %d bytes to spare" % -over if over <= 0 else "OVER THE CAP by %d bytes" % over))
     print("rootfs %d bytes, sha256 %s" % (rsize, rsha))

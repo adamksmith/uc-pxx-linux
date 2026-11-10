@@ -75,7 +75,7 @@ tools/               helpers for the board (switch init)
 - [boot-control.md](docs/boot-control.md): the A/B boot control, the pinned files and the kernel updates
 - [leds.md](docs/leds.md): the LED package
 - [install.md](docs/install.md): the plan of the install path (no installer in this repository yet)
-- [mainline-payload.md](docs/mainline-payload.md): the mainline payload of the installer (contract v1) and its reproducible build
+- [mainline-payload.md](docs/mainline-payload.md): the mainline payload of the installer (contract v2) and its reproducible build
 
 ## Warning
 

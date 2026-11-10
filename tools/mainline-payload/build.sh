@@ -1,15 +1,15 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Build the mainline payload of the UC-P10 (contract v1, docs/mainline-payload.md):
+# Build the mainline payload of the UC-P10 (contract v2, docs/mainline-payload.md):
 # the folder uc-pxx-mainline/ with manifest.json, boot-template.img and
 # rootfs.ext4, for the installer (uc-pxx-installer, mainline mode). Run it on
 # the build host, never on a workstation. It touches no unit and runs no
 # flashing tool.
 #
 #   tools/mainline-payload/build.sh prime --snapshot DIR [--channel URL]
-#   tools/mainline-payload/build.sh build --snapshot DIR --resource FILE --out DIR
+#   tools/mainline-payload/build.sh build --snapshot DIR --resource FILE --vbmeta FILE --out DIR
 #                                         [--inputs FILE] [--authorized-keys FILE]
-#                                         [--apk-url URL] [--keep-work]
+#                                         [--headroom MIB] [--apk-url URL] [--keep-work]
 #
 # prime   Makes the input snapshot DIR (network): DIR/tsx is the published apk
 #         tree of tsx-aports (rootfs/fetch-apk-tree.sh, --channel, default the
@@ -40,7 +40,9 @@
 #            payload.py assembles the template again by itself and stops when
 #            the two differ. Only the sha256 and the size stay: the assembled
 #            image holds the vendor resource and is deleted
-#         5. manifest.json (payload.py manifest)
+#         5. the patched vbmeta: vbmeta-patch.py patch of --vbmeta. Only its
+#            sha256 stays (the installer makes it again from vbmeta_b)
+#         6. manifest.json (payload.py manifest)
 # Outputs in --out: uc-pxx-mainline/ (or uc-pxx-mainline.OVER-CAP/ when the
 # assembled image is larger than the vbmeta boot cap: then the exit status is
 # 3, and the installer must never get that folder), inputs.txt (the inputs
@@ -49,6 +51,13 @@
 # --resource  the stock boot resource of the UC-P10 (sha256 290ef405...). A
 #             vendor file: it stays on the build host, it is never copied into
 #             the outputs, and the assembled image is deleted.
+# --vbmeta    the signed vbmeta of 1.0.0.94 userdebug (sha256 7958c09b...). A
+#             vendor file: as the resource, it stays on the build host and
+#             the patched copy is deleted after the manifest is written.
+# --headroom  free space in rootfs.ext4 in MiB (IMG_HEADROOM_MB of
+#             mkrootfs.sh), default 0: the payload must fit the P10-INSTALL
+#             drive, and the initramfs grows the file system to fill system_a
+#             on the first boot. mkrootfs.sh adds 5 % of the content anyway.
 # --apk-url   the apk repository that the panel lists (TSX_APK_URL of
 #             mkrootfs.sh; default https://tsx-aports.unexceptional.net, the
 #             stable channel). Use the channel of the snapshot: the uc-pxx
@@ -57,23 +66,26 @@
 #             release workflow takes them from TSX_AUTHORIZED_KEYS). Default:
 #             none, so the image has no ssh login until the panel gets a key
 #             (docs/rootfs.md "Root login"). The inputs record the sha256.
+#             A payload with keys is for the units of the key owner only:
+#             build-info.txt says so. The root password stays locked.
 #
 # The inputs file: one KEY=VALUE per line, "#" lines are comments, each key
 # once, no other key:
-#   FORMAT              uc-pxx-mainline-payload-inputs-1
+#   FORMAT              uc-pxx-mainline-payload-inputs-2
 #   VERSION             the version of the manifest: a release tag or dev-<commit>
 #   SOURCE_DATE_EPOCH   seconds
 #   UC_PXX_LINUX_COMMIT HEAD of this checkout (a clean tree)
 #   KERNEL_REV          kernel/KERNEL_REV.lts = the reviewed pin
 #   MKIMAGE_SHA256, SHIM_SHA256   kernel/mkimage.sh, bootloader/shim.S
 #   RESOURCE_SHA256     --resource (always 290ef405...)
+#   VBMETA_SHA256       --vbmeta (always 7958c09b...)
 #   ALPINE_IMAGE        the build container, by digest (linux/arm64)
 #   ALPINE_IMAGE_ID     its image id
 #   ALPINE_SNAPSHOT, TSX_SNAPSHOT, PIP_SNAPSHOT   "sha256 count" of the
 #                       snapshot folders (apk-snapshot.py digest)
 #   PROFILE             the rootfs profile (ha)
 #   ROOTFS_UUID         the UUID of rootfs.ext4
-#   IMG_HEADROOM_MB     free space in rootfs.ext4 (mkrootfs.sh)
+#   IMG_HEADROOM_MB     free space in rootfs.ext4 (mkrootfs.sh; --headroom)
 #   TSX_APK_URL         the apk repository that the panel lists
 #   AUTHORIZED_KEYS_SHA256  none, or the sha256 of --authorized-keys
 #   CROSS_CC_VERSION, CROSS_LD_VERSION, DTC_VERSION, MKBOOTIMG_SHA256
@@ -90,15 +102,17 @@ PY="python3 -I"
 CROSS=${CROSS_COMPILE:-aarch64-linux-gnu-}
 REVIEWED_KERNEL_REV=d02e92631f2810a4a43fb6f09824afb9b0044ee2
 RESOURCE_SHA=290ef40577d434d702c3544076dbebd6ddd17e16087eff0e84c92549d67bb363
+# the signed vbmeta of 1.0.0.94 userdebug (the source of the patched vbmeta_a)
+VBMETA_SHA=7958c09b4fb6fb3d54a2382682074b4812e92cc1d81ca3183b20f03ff52f5f5c
 # kernel/mkimage.sh as reviewed with the boot control (ucp10 RULES.md): it writes the token
 MKIMAGE_SHA=98ef579ce1f152463c8902c53c2f2f8edfbdfd6b8a0d40d650c59844d893703f
 # alpine:3.24 for linux/arm64 (3.24.3), the image of the other uc-pxx builds
 ALPINE_REF_DEFAULT=alpine@sha256:e311ae748be7f56ae5cba304bc488f0786df68ee507513f654a5cc8597cffb42
 ALPINE=v3.24
 UPSTREAM=${UPSTREAM_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
-FMT=uc-pxx-mainline-payload-inputs-1
+FMT=uc-pxx-mainline-payload-inputs-2
 KEYS="FORMAT VERSION SOURCE_DATE_EPOCH UC_PXX_LINUX_COMMIT KERNEL_REV MKIMAGE_SHA256 SHIM_SHA256
-RESOURCE_SHA256 ALPINE_IMAGE ALPINE_IMAGE_ID ALPINE_SNAPSHOT TSX_SNAPSHOT PIP_SNAPSHOT PROFILE
+RESOURCE_SHA256 VBMETA_SHA256 ALPINE_IMAGE ALPINE_IMAGE_ID ALPINE_SNAPSHOT TSX_SNAPSHOT PIP_SNAPSHOT PROFILE
 ROOTFS_UUID IMG_HEADROOM_MB TSX_APK_URL AUTHORIZED_KEYS_SHA256 CROSS_CC_VERSION CROSS_LD_VERSION
 DTC_VERSION MKBOOTIMG_SHA256"
 die() { echo "mainline-payload: $*" >&2; exit 1; }
@@ -108,11 +122,13 @@ step() { echo "== $* ($(( $(date +%s) - T0 )) s)"; }
 sha() { sha256sum < "$1" | cut -c1-64; }
 
 CMD=${1:-}; [ $# -gt 0 ] && shift
-SNAP= RES= OUT= INPUTS= KEYSFILE= KEEP=0 CHANNEL=https://tsx-aports.unexceptional.net APKURL0=https://tsx-aports.unexceptional.net
+SNAP= RES= VBM= OUT= INPUTS= KEYSFILE= HEADROOM0= KEEP=0 CHANNEL=https://tsx-aports.unexceptional.net APKURL0=https://tsx-aports.unexceptional.net
 while [ $# -gt 0 ]; do
 	case $1 in
 	--snapshot) SNAP=${2:?}; shift;;
 	--resource) RES=${2:?}; shift;;
+	--vbmeta) VBM=${2:?}; shift;;
+	--headroom) HEADROOM0=${2:?}; shift;;
 	--out) OUT=${2:?}; shift;;
 	--inputs) INPUTS=${2:?}; shift;;
 	--authorized-keys) KEYSFILE=${2:?}; shift;;
@@ -201,7 +217,8 @@ choose FORMAT $FMT
 choose VERSION "dev-${COMMIT:0:12}"
 choose SOURCE_DATE_EPOCH "$(git -C "$HERE" log -1 --format=%ct "$COMMIT")"
 choose PROFILE ha
-choose IMG_HEADROOM_MB 256
+choose IMG_HEADROOM_MB "${HEADROOM0:-0}"
+[ -z "$INPUTS" ] || [ -z "$HEADROOM0" ] || [ "$HEADROOM0" = "${IN[IMG_HEADROOM_MB]}" ] || die "--headroom differs from IMG_HEADROOM_MB of the inputs file"
 choose TSX_APK_URL "$APKURL0"
 [ -z "$INPUTS" ] || [ "$APKURL0" = https://tsx-aports.unexceptional.net ] || [ "$APKURL0" = "${IN[TSX_APK_URL]}" ] || die "--apk-url differs from TSX_APK_URL of the inputs file"
 VERSION=${GOT[VERSION]} SDE=${GOT[SOURCE_DATE_EPOCH]} PROFILE=${GOT[PROFILE]}
@@ -265,11 +282,15 @@ if [ "$CMD" = prime ]; then
 fi
 
 # ---- build --------------------------------------------------------------------------
-[ -n "$RES" ] && [ -n "$OUT" ] || usage
+[ -n "$RES" ] && [ -n "$VBM" ] && [ -n "$OUT" ] || usage
 [ -f "$RES" ] || die "no resource $RES"
 RES=$(readlink -f "$RES")
 pin RESOURCE_SHA256 "$(sha "$RES")"
 [ "${GOT[RESOURCE_SHA256]}" = $RESOURCE_SHA ] || die "--resource has sha256 ${GOT[RESOURCE_SHA256]}, not the stock resource $RESOURCE_SHA"
+[ -f "$VBM" ] || die "no vbmeta $VBM"
+VBM=$(readlink -f "$VBM")
+pin VBMETA_SHA256 "$(sha "$VBM")"
+[ "${GOT[VBMETA_SHA256]}" = $VBMETA_SHA ] || die "--vbmeta has sha256 ${GOT[VBMETA_SHA256]}, not the signed 1.0.0.94 userdebug vbmeta $VBMETA_SHA"
 for t in "${CROSS}gcc" "${CROSS}ld" "${CROSS}objcopy" mkbootimg fdtget fdtput; do command -v "$t" >/dev/null || die "$t is not installed"; done
 pin CROSS_CC_VERSION "$("${CROSS}gcc" --version | head -n 1)"
 pin CROSS_LD_VERSION "$("${CROSS}ld" -v | head -n 1)"
@@ -329,31 +350,44 @@ echo "kernel/mkimage.sh makes the template again byte for byte (token $TOKEN)"
 step "3. boot_assembled (kernel/mkimage.sh --resource, the stock resource)"
 bash "$HERE/kernel/mkimage.sh" --resource "$RES" --board "$TOKEN" "$W/Image" "$DTB" "$W/assembled.img" > "$W/mkimage-assembled.log"
 
-step "4. manifest.json"
+step "4. the patched vbmeta (vbmeta-patch.py: only the boot image_size of the signed vbmeta)"
+$PY "$T/vbmeta-patch.py" patch "$VBM" "$W/vbmeta-patched.img" > "$W/vbmeta-patch.info" || die "the vbmeta patch was refused"
+cat "$W/vbmeta-patch.info"
+
+step "5. manifest.json"
 mkdir -p "$W/p"
 cp "$TPL" "$W/p/boot-template.img"
 cp "$RO/rootfs.ext4" "$W/p/rootfs.ext4"
 rc=0
 $PY "$T/payload.py" manifest --version "$VERSION" --pin "$HERE/kernel/KERNEL_REV.lts" --template "$W/p/boot-template.img" \
-	--resource "$RES" --assembled "$W/assembled.img" --rootfs "$W/p/rootfs.ext4" --out "$W/p/manifest.json" \
+	--resource "$RES" --assembled "$W/assembled.img" --rootfs "$W/p/rootfs.ext4" \
+	--vbmeta "$VBM" --vbmeta-patched "$W/vbmeta-patched.img" --out "$W/p/manifest.json" \
 	--allow-over-cap > "$W/manifest.log" || rc=$?
 cat "$W/manifest.log"
 [ "$rc" = 0 ] || [ "$rc" = 3 ] || die "the manifest generator refused the payload"
-# the assembled image holds the vendor resource: only its sha256 and size stay
-rm -f "$W/assembled.img"
+# the assembled image holds the vendor resource, the patched vbmeta is a
+# vendor file: only their sha256 and sizes stay
+rm -f "$W/assembled.img" "$W/vbmeta-patched.img"
 DIR=uc-pxx-mainline
 [ "$rc" = 0 ] || DIR=uc-pxx-mainline.OVER-CAP
 mv "$W/p" "$OUT/$DIR"
 cp "$RO/rootfs.manifest" "$RO/rootfs.sizes" "$OUT/"
 
-step "5. the record"
+step "6. the record"
 TS=$(stat -c %s "$OUT/$DIR/boot-template.img") RS=$(stat -c %s "$OUT/$DIR/rootfs.ext4") MS=$(stat -c %s "$OUT/$DIR/manifest.json")
 DRIVE=$((1200 * 1048576))
 TOTAL=$((TS + RS + MS))
 {
-	echo "UC-P10 mainline payload, contract v1 (docs/mainline-payload.md)"
+	echo "UC-P10 mainline payload, contract v2 (docs/mainline-payload.md)"
 	echo "version $VERSION, uc-pxx-linux $COMMIT, kernel $REV ($KREL), token $TOKEN"
 	sed -n 's/^\(boot\|vbmeta\|rootfs\) /&/p' "$W/manifest.log"
+	echo "rootfs.ext4 headroom: IMG_HEADROOM_MB=$HEADROOM (mkrootfs.sh adds 5 % of the content)"
+	if [ "${GOT[AUTHORIZED_KEYS_SHA256]}" = none ]; then
+		echo "root login: no ssh key, the root password locked (no login until the panel gets a key)"
+	else
+		echo "root login: ssh keys only (authorized_keys sha256 ${GOT[AUTHORIZED_KEYS_SHA256]}), the root password locked;" \
+			"FOR THE UNITS OF THE KEY OWNER ONLY: never publish this payload for other users"
+	fi
 	sed -n 's/^initramfs_\(sha256\|size\)=/initramfs (built into the Image) \1 /p' "$W/initramfs.info"
 	sed -n 's/^program_/initramfs program /p' "$W/initramfs.info"
 	echo "the payload folder: $TOTAL bytes ($((TOTAL / 1048576)) MiB); the P10-INSTALL drive: $DRIVE bytes (1200 MiB, FAT):" \
