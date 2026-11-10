@@ -37,9 +37,12 @@ eq() { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1', want '$2')"; fi
 UD_SECT=13724639
 truncate -s $((UD_SECT * 512)) "$T/userdata.img"
 truncate -s 64M "$T/rootfs.img"
-LU=$(losetup -f --show "$T/userdata.img") || { echo "SKIPPED: losetup failed (no loop devices?)"; exit 0; }
+# attach FILE: a free loop device for FILE (busybox losetup has no --show)
+attach() { _l=$(losetup -f) && losetup "$_l" "$1" && echo "$_l"; }
+LU=$(attach "$T/userdata.img") || { echo "SKIPPED: losetup failed (no loop devices?)"; exit 0; }
 LOOPS="$LU"
-LR=$(losetup -f --show "$T/rootfs.img"); LOOPS="$LOOPS $LR"
+LR=$(attach "$T/rootfs.img") || { echo "FAIL: no second loop device"; exit 1; }
+LOOPS="$LOOPS $LR"
 mkfs.ext4 -q -F -L tsxroot "$LR"
 
 # the made-up eMMC: sysfs, /dev links to the loops
