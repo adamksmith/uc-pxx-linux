@@ -107,6 +107,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: install busybox (the rescue and data tests run with busybox sh)
+        run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends busybox
       - name: read COMMON_REF
         id: common
         run: echo "ref=$(grep -v -e '^#' -e '^$' COMMON_REF)" >> "$GITHUB_OUTPUT"
