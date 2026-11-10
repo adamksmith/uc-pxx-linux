@@ -1,5 +1,5 @@
 #!/bin/sh
-# Host test for the mainline payload (tools/mainline-payload, contract v1 of
+# Host test for the mainline payload (tools/mainline-payload, contract v2 of
 # docs/mainline-payload.md) with a made-up kernel Image, device tree, resource
 # and rootfs. It checks:
 #   - the byte layout of the boot template (kernel/mkimage.sh with an empty
@@ -10,19 +10,26 @@
 #     pin that is not the reviewed one, a release of another kernel, a header
 #     name that differs from uc-pxx.id, a template with a second part, a
 #     resource that is not the stock one, a rootfs that is not a multiple of
-#     512 or has another label, an assembled image that differs
+#     512 or has another label, an assembled image that differs, a vbmeta
+#     that is not the signed one, a patched vbmeta that is not the pinned patch
+#   - vbmeta-patch.py: the output is the pinned patch, only bytes 1088-1095
+#     change, and it refuses any other input
 #   - build.sh refuses a checkout whose kernel/KERNEL_REV.lts is not the
 #     reviewed pin before it does anything else
 # The parts with kernel/mkimage.sh need the cross compiler, mkbootimg, dtc,
 # fdtget and fdtput; without them they print SKIPPED. The rest needs python3.
-# UC_PXX_RESOURCE=FILE (the stock resource, sha256 290ef405..., a vendor file
-# that stays on the build host) adds the manifest of a whole made-up payload.
+# UC_PXX_RESOURCE=FILE (the stock resource, sha256 290ef405...) together with
+# UC_PXX_VBMETA=FILE (the signed vbmeta of 1.0.0.94 userdebug, sha256
+# 7958c09b...) adds the manifest of a whole made-up payload; UC_PXX_VBMETA
+# alone adds the checks of vbmeta-patch.py. Both are vendor files that stay
+# on the build host.
 set -u
 HERE=$(cd "$(dirname "$0")/../.." && pwd)
 P="python3 -I $HERE/tools/mainline-payload/payload.py"
 CROSS=${CROSS_COMPILE:-aarch64-linux-gnu-}
 command -v python3 >/dev/null 2>&1 || { echo "SKIPPED: python3 is not installed"; exit 0; }
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+head -c 8192 /dev/zero > "$T/vbmeta.fake"   # a made-up vbmeta
 N=0 F=0
 ok()  { N=$((N + 1)); echo "  ok: $*"; }
 bad() { F=$((F + 1)); echo "  FAIL: $*"; }
@@ -145,8 +152,10 @@ PY
 
 	echo "== refusals of the manifest generator =="
 	# man PIN TEMPLATE RESOURCE ASSEMBLED ROOTFS
+	# VS, VP: the signed and the patched vbmeta (made-up unless UC_PXX_VBMETA)
+	VS=$T/vbmeta.fake VP=$T/vbmeta.fake
 	man() { $P manifest --version dev-test --pin "$1" --template "$2" --resource "$3" --assembled "$4" \
-		--rootfs "$5" --out "$T/manifest.json"; }
+		--rootfs "$5" --vbmeta "$VS" --vbmeta-patched "$VP" --out "$T/manifest.json"; }
 	refuse "the manifest with a pin that is not the reviewed one" "the reviewed pin is" \
 		man "$T/pin.bad" "$T/tpl.img" "$T/res.img" "$T/mk-asm.img" "$T/rootfs.ext4"
 	refuse "the manifest with a template of another kernel" "the pin is" \
@@ -154,17 +163,19 @@ PY
 	refuse "the manifest with a resource that is not the stock one" "the stock resource is" \
 		man "$T/pin.ok" "$T/tpl.img" "$T/res.img" "$T/mk-asm.img" "$T/rootfs.ext4"
 	[ ! -e "$T/manifest.json" ] && ok "a refused manifest is not written" || bad "a refused manifest was written"
-	if [ -n "${UC_PXX_RESOURCE:-}" ]; then
+	if [ -n "${UC_PXX_RESOURCE:-}" ] && [ -n "${UC_PXX_VBMETA:-}" ]; then
+		python3 -I "$HERE/tools/mainline-payload/vbmeta-patch.py" patch "$UC_PXX_VBMETA" "$T/vbmeta.patched" >/dev/null
+		VS=$UC_PXX_VBMETA VP=$T/vbmeta.patched
 		mk --resource "$UC_PXX_RESOURCE" --board ucpxx-test0001 "$T/Image" "$T/p10.dtb" "$T/real-asm.img"
 		R=$UC_PXX_RESOURCE
 		if out=$(man "$T/pin.ok" "$T/tpl.img" "$R" "$T/real-asm.img" "$T/rootfs.ext4" 2>&1); then ok "the manifest of a made-up payload is written"; else bad "manifest: $out"; fi
-		python3 -I - "$T/manifest.json" "$T/tpl.img" "$T/real-asm.img" "$T/rootfs.ext4" "$PIN" <<'PY' && ok "manifest.json has exactly the keys and values of contract v1" || bad "manifest.json is not contract v1"
+		python3 -I - "$T/manifest.json" "$T/tpl.img" "$T/real-asm.img" "$T/rootfs.ext4" "$PIN" <<'PY' && ok "manifest.json has exactly the keys and values of contract v2" || bad "manifest.json is not contract v2"
 import hashlib, json, os, sys
 m = json.load(open(sys.argv[1]))
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 assert list(m) == ["schema", "kind", "version", "model", "kernel", "token", "boot_template", "boot_assembled",
-                   "rootfs", "requires_bootchain", "vbmeta_boot_cap"]
-assert m["schema"] == 1 and m["kind"] == "uc-pxx-mainline" and m["model"] == "UC-P10" and m["version"] == "dev-test"
+                   "rootfs", "requires_bootchain", "vbmeta_patched", "vbmeta_boot_cap"]
+assert m["schema"] == 2 and m["kind"] == "uc-pxx-mainline" and m["model"] == "UC-P10" and m["version"] == "dev-test"
 assert m["kernel"] == {"rev": sys.argv[5]} and m["token"] == "ucpxx-test0001"
 assert m["boot_template"] == {"file": "boot-template.img", "size": os.path.getsize(sys.argv[2]), "sha256": sha(sys.argv[2])}
 assert m["boot_assembled"] == {"resource_sha256": "290ef40577d434d702c3544076dbebd6ddd17e16087eff0e84c92549d67bb363",
@@ -177,9 +188,20 @@ assert m["requires_bootchain"] == {
     "dtbo_sha256": "83b3e6321c43960bc4215635550a405b297ed965d7fc6ec548bb2b02d9d93629",
     "vbmeta_sha256": "7958c09b4fb6fb3d54a2382682074b4812e92cc1d81ca3183b20f03ff52f5f5c",
     "resource_sha256": "290ef40577d434d702c3544076dbebd6ddd17e16087eff0e84c92549d67bb363"}
-assert m["vbmeta_boot_cap"] == 38029312
+assert m["vbmeta_patched"] == {
+    "source_sha256": "7958c09b4fb6fb3d54a2382682074b4812e92cc1d81ca3183b20f03ff52f5f5c", "size": 8192,
+    "sha256": "cebd4d8a68c8861b9801c4d83a14ab3d06f1d85b015a01686fae2d305a69f35e", "field_offset": 1088,
+    "boot_image_size": 67108864}
+assert m["vbmeta_boot_cap"] == 67108864
 PY
 		rm -f "$T/manifest.json"
+		VS=$T/vbmeta.fake
+		refuse "a vbmeta that is not the signed 1.0.0.94 userdebug one" "not the signed 1.0.0.94 userdebug vbmeta" \
+			man "$T/pin.ok" "$T/tpl.img" "$R" "$T/real-asm.img" "$T/rootfs.ext4"
+		VS=$UC_PXX_VBMETA VP=$UC_PXX_VBMETA
+		refuse "a patched vbmeta that is not the pinned patch" "not the pinned patched vbmeta" \
+			man "$T/pin.ok" "$T/tpl.img" "$R" "$T/real-asm.img" "$T/rootfs.ext4"
+		VP=$T/vbmeta.patched
 		refuse "an assembled image that is not the assembly of the template" "differs from the assembly" \
 			man "$T/pin.ok" "$T/tpl.img" "$R" "$T/mk-asm.img" "$T/rootfs.ext4"
 		refuse "a rootfs that is not a multiple of 512" "not a multiple of 512" \
@@ -191,8 +213,37 @@ PY
 		[ ! -e "$T/manifest.json" ] && ok "no manifest after these refusals" || bad "a refused manifest was written"
 		rm -f "$T/real-asm.img"
 	else
-		echo "  SKIPPED: the manifest of a whole payload (no UC_PXX_RESOURCE)"
+		echo "  SKIPPED: the manifest of a whole payload (no UC_PXX_RESOURCE and UC_PXX_VBMETA)"
 	fi
+fi
+
+echo "== vbmeta-patch.py =="
+V="python3 -I $HERE/tools/mainline-payload/vbmeta-patch.py"
+refuse "vbmeta-patch.py with a made-up vbmeta" "not the signed 1.0.0.94 userdebug vbmeta" $V patch "$T/vbmeta.fake" "$T/vp.out"
+[ ! -e "$T/vp.out" ] && ok "a refused patch writes no output" || bad "a refused patch wrote an output"
+if [ -n "${UC_PXX_VBMETA:-}" ]; then
+	if out=$($V patch "$UC_PXX_VBMETA" "$T/vp1" 2>&1) && $V patch "$UC_PXX_VBMETA" "$T/vp2" >/dev/null 2>&1; then
+		ok "vbmeta-patch.py patch of the signed vbmeta"
+	else
+		bad "vbmeta-patch.py: $out"
+	fi
+	cmp -s "$T/vp1" "$T/vp2" && ok "two runs give the same bytes" || bad "two runs differ"
+	[ "$(sha256sum < "$T/vp1" | cut -c1-64)" = cebd4d8a68c8861b9801c4d83a14ab3d06f1d85b015a01686fae2d305a69f35e ] &&
+		ok "the output has the pinned sha256" || bad "the output does not have the pinned sha256"
+	python3 -I - "$UC_PXX_VBMETA" "$T/vp1" <<'PY' && ok "only bytes 1088-1095 differ, and they hold 67108864" || bad "the patch changes other bytes"
+import struct, sys
+a, b = open(sys.argv[1], "rb").read(), open(sys.argv[2], "rb").read()
+d = [i for i in range(len(a)) if a[i] != b[i]]
+assert len(a) == len(b) == 8192 and d and all(1088 <= i < 1096 for i in d)
+assert struct.unpack_from(">Q", a, 1088)[0] == 38029312 and struct.unpack_from(">Q", b, 1088)[0] == 67108864
+PY
+	echo "$out" | grep -qx 'changed_bytes=1092,1093,1094' && ok "the facts name the changed bytes 1092-1094" || bad "changed_bytes: $out"
+	$V check "$UC_PXX_VBMETA" "$T/vp1" >/dev/null 2>&1 && ok "check accepts the patch" || bad "check refuses the patch"
+	refuse "check of the signed file as the patch" "is not the patch of" $V check "$UC_PXX_VBMETA" "$UC_PXX_VBMETA"
+	python3 -I -c 'import sys; b = bytearray(open(sys.argv[1], "rb").read()); b[4000] ^= 1; open(sys.argv[2], "wb").write(b)' "$UC_PXX_VBMETA" "$T/vflip"
+	refuse "a signed vbmeta with one byte changed" "not the signed 1.0.0.94 userdebug vbmeta" $V patch "$T/vflip" "$T/vp3"
+else
+	echo "  SKIPPED: vbmeta-patch.py of the signed vbmeta (no UC_PXX_VBMETA)"
 fi
 
 echo "== build.sh: the kernel pin =="
@@ -202,7 +253,7 @@ if command -v git >/dev/null 2>&1; then
 	printf 'deadbeef%s\n' "$(echo "$PIN" | cut -c9-)" > "$T/repo/kernel/KERNEL_REV.lts"
 	(cd "$T/repo" && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -q -m t) >/dev/null 2>&1
 	refuse "build.sh with a kernel pin that is not the reviewed one" "not the reviewed kernel" \
-		bash "$T/repo/tools/mainline-payload/build.sh" build --snapshot "$T/snap" --resource "$T/res.img" --out "$T/out"
+		bash "$T/repo/tools/mainline-payload/build.sh" build --snapshot "$T/snap" --resource "$T/res.img" --vbmeta "$T/vbmeta.fake" --out "$T/out"
 	[ ! -e "$T/out" ] && ok "build.sh made no output" || bad "build.sh made an output"
 else
 	echo "  SKIPPED: git is not installed"

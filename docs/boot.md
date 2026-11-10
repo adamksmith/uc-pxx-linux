@@ -157,7 +157,8 @@ running kernel is the image in the slot. See
   on the unit that we used has this value as the image size. A larger image
   is truncated by libavb. On a new unit with the signed 1.0.0.94 userdebug
   vbmeta the value is 38,029,312 bytes, and the image with the stock resource
-  is larger today ([mainline-payload.md](mainline-payload.md) "Size limits").
+  is larger today. So a mainline install writes `vbmeta_a` with this value
+  patched to 64 MiB ([mainline-payload.md](mainline-payload.md), contract v2).
 - The Linux Image must end below the secure OS at `0x8400000`. A larger
   Image is a build error in `kernel/mkimage.sh`.
 - The copy must not overlap its source. `kernel/mkimage.sh` checks this for

@@ -4,13 +4,13 @@ The mainline payload is the input of the installer for a mainline install on
 a UC-P10 (uc-pxx-installer, mainline mode). It holds the boot image of the
 kernel without the vendor resource, the root file system and a manifest.
 `tools/mainline-payload/build.sh` makes it on a build host. This page tells
-the contract (version 1) and how to build the payload.
+the contract (version 2) and how to build the payload.
 
 Nothing on this page touches a unit. The installer does all writes, with its
 own checks and reviews. Read [boot.md](boot.md) and
 [boot-control.md](boot-control.md) first.
 
-## Contract v1
+## Contract v2
 
 The P10-INSTALL drive holds a folder `uc-pxx-mainline/` with three files:
 
@@ -24,7 +24,7 @@ The P10-INSTALL drive holds a folder `uc-pxx-mainline/` with three files:
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "kind": "uc-pxx-mainline",
   "version": "<release tag or dev-<commit>>",
   "model": "UC-P10",
@@ -42,7 +42,14 @@ The P10-INSTALL drive holds a folder `uc-pxx-mainline/` with three files:
     "vbmeta_sha256": "7958c09b4fb6fb3d54a2382682074b4812e92cc1d81ca3183b20f03ff52f5f5c",
     "resource_sha256": "290ef40577d434d702c3544076dbebd6ddd17e16087eff0e84c92549d67bb363"
   },
-  "vbmeta_boot_cap": 38029312
+  "vbmeta_patched": {
+    "source_sha256": "7958c09b4fb6fb3d54a2382682074b4812e92cc1d81ca3183b20f03ff52f5f5c",
+    "size": 8192,
+    "sha256": "cebd4d8a68c8861b9801c4d83a14ab3d06f1d85b015a01686fae2d305a69f35e",
+    "field_offset": 1088,
+    "boot_image_size": 67108864
+  },
+  "vbmeta_boot_cap": 67108864
 }
 ```
 
@@ -54,17 +61,32 @@ The P10-INSTALL drive holds a folder `uc-pxx-mainline/` with three files:
   resource, padded to a page of 2048 bytes. The installer makes its own
   assembly with the resource of the keeper slot. It must get this sha256 and
   size, and the size must be at most `vbmeta_boot_cap`.
-- `vbmeta_boot_cap` is the `image_size` of the boot hash descriptor of the
-  signed 1.0.0.94 userdebug vbmeta. libavb loads only this many bytes of
-  `boot_a`, so a larger image is cut off.
+- `vbmeta_patched` is the vbmeta that `vbmeta_a` gets: the signed 1.0.0.94
+  userdebug vbmeta (`source_sha256`, the `vbmeta_sha256` of the boot chain)
+  with only the 8-byte `image_size` of its boot hash descriptor (at
+  `field_offset`) changed from 38,029,312 to `boot_image_size`, 67,108,864
+  (the size of `boot_a`). `tools/mainline-payload/vbmeta-patch.py` makes it;
+  the bytes 1092 to 1094 change. The payload does not hold the file (it is a
+  vendor file): the installer makes it again from the keeper's `vbmeta_b`
+  and must get this sha256 and size.
+- Why the patch: libavb loads only `image_size` bytes of `boot_a`, and U-Boot
+  starts that buffer. The signed value is smaller than the mainline boot
+  image. Unit 2 has started mainline from slot A with the same value in its
+  `vbmeta_a` since 2026-10-24. The patch breaks the signature of the vbmeta.
+  That adds no new dependency: the boot hash of a mainline image never
+  matches the signed digest, so a mainline slot starts only on an unlocked
+  unit (orange) in any case. On a locked unit, the slot fails the
+  verification and the keeper starts.
+- `vbmeta_boot_cap` is the `boot_image_size` of `vbmeta_patched`. The
+  assembled image must not be larger.
 - `requires_bootchain` is the boot chain of 1.0.0.94 userdebug that the
   mainline slot needs.
-- The consumer refuses unknown keys, a schema other than 1 and a model other
+- The consumer refuses unknown keys, a schema other than 2 and a model other
   than `UC-P10`.
 
 The payload never holds a vendor file. The template has no resource. The
-assembled image is computed on the build host only for its sha256 and size,
-and then deleted.
+assembled image and the patched vbmeta are computed on the build host only
+for their sha256 and size, and then deleted.
 
 ## Where the parts come from
 
@@ -101,11 +123,12 @@ archive`, so a file that is not committed never gets into the payload):
 tools/mainline-payload/build.sh prime --snapshot SNAP --channel https://tsx-aports.unexceptional.net/testing
 
 # 2. no network: a dev build. It writes OUT/inputs.txt
-tools/mainline-payload/build.sh build --snapshot SNAP --resource RESOURCE --out OUT \
-    --apk-url https://tsx-aports.unexceptional.net/testing
+tools/mainline-payload/build.sh build --snapshot SNAP --resource RESOURCE --vbmeta VBMETA --out OUT \
+    --apk-url https://tsx-aports.unexceptional.net/testing [--authorized-keys KEYS]
 
 # 3. a reproduction: the same bytes from the same inputs, in another folder
-tools/mainline-payload/build.sh build --snapshot SNAP --resource RESOURCE --out OUT2 --inputs OUT/inputs.txt
+tools/mainline-payload/build.sh build --snapshot SNAP --resource RESOURCE --vbmeta VBMETA --out OUT2 \
+    --inputs OUT/inputs.txt [--authorized-keys KEYS]
 ```
 
 - `prime` fetches the published apk tree of tsx-aports into `SNAP/tsx`, then
@@ -117,12 +140,21 @@ tools/mainline-payload/build.sh build --snapshot SNAP --resource RESOURCE --out 
   snapshot. The inputs file records the commit, the pins, the digest of the
   container image and the digests of the three snapshot folders. With
   `--inputs` every value must match, or the build stops.
-- `RESOURCE` is the stock resource (sha256 `290ef405...`). It is a vendor file
-  and stays on the build host.
-- `--authorized-keys FILE` bakes ssh keys for root into the rootfs (the
-  release workflow uses the secret `TSX_AUTHORIZED_KEYS`). Without it the
-  image has no ssh key and a locked root password ([rootfs.md](rootfs.md)
-  "Root login").
+- `RESOURCE` is the stock resource (sha256 `290ef405...`), `VBMETA` the
+  signed vbmeta of 1.0.0.94 userdebug (sha256 `7958c09b...`). Both are vendor
+  files and stay on the build host.
+- `--headroom MIB` is the free space in `rootfs.ext4` (`IMG_HEADROOM_MB` of
+  `mkrootfs.sh`). The default is 0, so that the payload fits the P10-INSTALL
+  drive; `mkrootfs.sh` adds 5 % of the content, and the initramfs grows the
+  file system to fill `system_a` on the first boot.
+- `--authorized-keys FILE` bakes ssh public keys for root into the rootfs
+  (`/root/.ssh/authorized_keys`; the release workflow uses the secret
+  `TSX_AUTHORIZED_KEYS`). The root password stays locked, so the login is by
+  key only. A payload with keys is for the units of the key owner only, and
+  `build-info.txt` says so. The inputs record the sha256 of the file; a
+  reproduction needs the same file. Without it the image has no ssh key and a
+  locked root password ([rootfs.md](rootfs.md) "Root login"). Never give a
+  private key: the build refuses a file with `PRIVATE KEY` in it.
 
 The outputs in `OUT`:
 
@@ -151,8 +183,9 @@ The outputs in `OUT`:
 
 ## Size limits
 
-- `boot_assembled` must be at most `vbmeta_boot_cap` (38,029,312 bytes) for
-  the signed 1.0.0.94 vbmeta. `build-info.txt` gives the margin or the excess.
+- `boot_assembled` must be at most `vbmeta_boot_cap` (67,108,864 bytes, the
+  patched vbmeta; 38,029,312 bytes for the signed one). `build-info.txt`
+  gives the margin or the excess.
 - The P10-INSTALL drive is a RAM drive of 1200 MiB (FAT). `build-info.txt`
   says if the payload folder fits.
 
@@ -166,7 +199,9 @@ Measured on 2026-11-09 with the kernel package 6.18.54-gd02e92631f28 (token
 | `rootfs.ext4` (content 1034 MiB, `IMG_HEADROOM_MB` 256) | 1,406,140,416 (1341 MiB) | - |
 | the payload folder | 1373 MiB | 1200 MiB: **174 MiB over** |
 
-So that build gives `uc-pxx-mainline.OVER-CAP/`. The initramfs is only about
+So that build gave `uc-pxx-mainline.OVER-CAP/` under contract v1. Contract v2
+(the patched vbmeta, cap 67,108,864) and `--headroom 0` (the default) remove
+both excesses; `build-info.txt` of each build gives its sizes. The initramfs is only about
 2 MB of the Image (xz). The excess must come out of the kernel Image or the
 boot image layout, or the vbmeta changes. The rootfs fits the drive with a
 small `IMG_HEADROOM_MB` (the initramfs grows the file system on the first
