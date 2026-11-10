@@ -307,6 +307,10 @@ pin PIP_SNAPSHOT "$($PY "$T/apk-snapshot.py" digest "$SNAP/pip")"
 [ ! -e "$OUT" ] || [ -z "$(ls -A "$OUT")" ] || die "--out $OUT is not empty: a build starts from nothing"
 mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
 W=$OUT/work; mkdir -p "$W"
+# V: the vendor intermediates (the assembled image with the resource, the
+# patched vbmeta), in a private folder outside --out, removed on every exit
+V=$(mktemp -d "${TMPDIR:-/tmp}/uc-pxx-payload-vendor.XXXXXX"); chmod 700 "$V"
+trap 'rm -rf "$V"' EXIT
 {
 	echo "# The inputs of a build of the UC-P10 mainline payload (tools/mainline-payload/build.sh build)."
 	[ -n "$INPUTS" ] || echo "# DEV BUILD (no --inputs): the values as found on $(hostname) at $(date -u +%Y-%m-%dT%H:%MZ)."
@@ -348,10 +352,10 @@ cmp -s "$W/remade.img" "$TPL" || die "kernel/mkimage.sh of this commit does not 
 echo "kernel/mkimage.sh makes the template again byte for byte (token $TOKEN)"
 
 step "3. boot_assembled (kernel/mkimage.sh --resource, the stock resource)"
-bash "$HERE/kernel/mkimage.sh" --resource "$RES" --board "$TOKEN" "$W/Image" "$DTB" "$W/assembled.img" > "$W/mkimage-assembled.log"
+bash "$HERE/kernel/mkimage.sh" --resource "$RES" --board "$TOKEN" "$W/Image" "$DTB" "$V/assembled.img" > "$W/mkimage-assembled.log"
 
 step "4. the patched vbmeta (vbmeta-patch.py: only the boot image_size of the signed vbmeta)"
-$PY "$T/vbmeta-patch.py" patch "$VBM" "$W/vbmeta-patched.img" > "$W/vbmeta-patch.info" || die "the vbmeta patch was refused"
+$PY "$T/vbmeta-patch.py" patch "$VBM" "$V/vbmeta-patched.img" > "$W/vbmeta-patch.info" || die "the vbmeta patch was refused"
 cat "$W/vbmeta-patch.info"
 
 step "5. manifest.json"
@@ -360,14 +364,15 @@ cp "$TPL" "$W/p/boot-template.img"
 cp "$RO/rootfs.ext4" "$W/p/rootfs.ext4"
 rc=0
 $PY "$T/payload.py" manifest --version "$VERSION" --pin "$HERE/kernel/KERNEL_REV.lts" --template "$W/p/boot-template.img" \
-	--resource "$RES" --assembled "$W/assembled.img" --rootfs "$W/p/rootfs.ext4" \
-	--vbmeta "$VBM" --vbmeta-patched "$W/vbmeta-patched.img" --out "$W/p/manifest.json" \
+	--resource "$RES" --assembled "$V/assembled.img" --rootfs "$W/p/rootfs.ext4" \
+	--vbmeta "$VBM" --vbmeta-patched "$V/vbmeta-patched.img" --out "$W/p/manifest.json" \
 	--allow-over-cap > "$W/manifest.log" || rc=$?
 cat "$W/manifest.log"
 [ "$rc" = 0 ] || [ "$rc" = 3 ] || die "the manifest generator refused the payload"
 # the assembled image holds the vendor resource, the patched vbmeta is a
-# vendor file: only their sha256 and sizes stay
-rm -f "$W/assembled.img" "$W/vbmeta-patched.img"
+# vendor file: only their sha256 and sizes stay (the EXIT trap removes $V
+# also after a refusal)
+rm -f "$V/assembled.img" "$V/vbmeta-patched.img"
 DIR=uc-pxx-mainline
 [ "$rc" = 0 ] || DIR=uc-pxx-mainline.OVER-CAP
 mv "$W/p" "$OUT/$DIR"
