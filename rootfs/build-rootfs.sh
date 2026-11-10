@@ -33,6 +33,12 @@
 #               "initramfs" puts it into the rescue. The DEV mode puts it into
 #               the rootfs. The binary links with the Realtek SDK and is not
 #               part of this repository.
+#   UC_PXX_STEP2_BOOTCTL_INST  optional, off by default (a separate build
+#               option, MAINLINE-STEP2-DESIGN Q-S8): the reviewed static
+#               uc-pxx-bootctl-inst r2 (sha256 20aa6bc5...). mkrootfs.sh puts it
+#               at /usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst (root, 0700).
+#               Without it the image has no file of that name (RULES.md). A
+#               step-2 image is for no unit before its RULES line
 #   UC_PXX_DEV_OVERLAY  TEST ONLY. 1 builds the rootfs without the uc-pxx
 #               packages, from the files of this repository (docs/rootfs.md
 #               "Test build without the uc-pxx packages"). The image gets the Alpine
@@ -308,6 +314,10 @@ rootfs() {
 		in_file UC_PXX_BOOTCTL "$UC_PXX_BOOTCTL"
 		in_file UC_PXX_REBOOT "$UC_PXX_REBOOT"
 		in_file RTL8363_INIT "$RTL8363_INIT"
+	fi
+	if [ -n "${UC_PXX_STEP2_BOOTCTL_INST:-}" ]; then
+		echo "WARNING: UC_PXX_STEP2_BOOTCTL_INST: a STEP-2 build with uc-pxx-bootctl-inst in the rootfs. For no unit before its RULES line."
+		in_file UC_PXX_STEP2_BOOTCTL_INST "$UC_PXX_STEP2_BOOTCTL_INST"
 	fi
 	# the build mirror: a local snapshot, a URL, or the default of mkrootfs.sh
 	if [ -n "${UC_PXX_APK_MIRROR:-}" ]; then

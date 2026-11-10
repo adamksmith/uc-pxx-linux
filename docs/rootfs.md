@@ -185,6 +185,48 @@ A release that ships this fstab ships the service and the initramfs of the
 same commit: an older `uc-pxx-lvm` only activates the volume group and does not
 mount it.
 
+### The data tools of step 2
+
+Step 2 of the mainline install (MAINLINE-STEP2-DESIGN §6) makes `/data` on
+`userdata` for both slots. Its two plan steps run
+`/usr/sbin/uc-pxx-data-migrate` from the running, successful slot, after the
+other slot is written and verified and before it is armed:
+
+- `uc-pxx-data-migrate format --yes`: the whole partition is discarded, the
+  first and the last MiB get zeros, and `mkfs.ext4 -L tsxdata-new -m 0`
+  makes an empty file system. Nothing mounts `tsxdata-new`.
+- `uc-pxx-data-migrate migrate --yes`: the panel services stop; all of
+  `/data` and each folder of `tsx-data` go to the place that `tsx-data` uses
+  (`/data/<folder>`, with the marker `.tsx-moved`), from `/data/<folder>`
+  when `tsx-data` moved it already, else from the root file system. Each
+  folder is compared by its tree digest. The three Wi-Fi/Bluetooth files go
+  to `/data/uc-pxx/firmware` (`uc-pxx-firmware` reads them there first). The
+  last step gives the file system the label `tsxdata` (the kernel ioctl
+  `FS_IOC_SETFSLABEL` on the mounted file system: the image has no `e2label`).
+- `status` and `check` only read. Both writing commands refuse a finished
+  `/data` (exit 4), a mounted or held `userdata`, a node that is not the
+  `userdata` of the layout (`mmcblk0p28`, start 16811008, 13724639 sectors),
+  a RAM boot, a root that is not the partition of the booted slot, and a
+  running fstab that mounts by label. A failure after the first write is exit
+  3: the label is not `tsxdata`, nothing mounts the file system, the data of
+  the root file system is unchanged, and both steps can run again.
+
+`/usr/sbin/uc-pxx-data-release` gives `userdata` back ("put Android back",
+§7.3): `copy --yes` puts `/data` back on the root file system of the running
+slot (the markers removed) and sets the label `tsxdata-old`; after a restart,
+`wipe --yes` writes zeros over the first and the last MiB.
+
+### uc-pxx-bootctl-inst in a step-2 build
+
+`uc-pxx-bootctl-inst` (the two-slot A/B tool of the installer) is never in a
+normal image: `mkrootfs.sh` stops when any file of that name is in the tree.
+The separate build option `UC_PXX_STEP2_BOOTCTL_INST` (off by default; the
+payload option `--step2-bootctl-inst`) puts exactly the reviewed r2 binary
+(sha256 `20aa6bc5...`) at `/usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst`
+(root, mode 0700, its folder 0700) for its one caller, `uc-pxx-step2`. The
+image then has `/etc/tsx/step2-bootctl-inst`. Such an image is for no unit
+until the owner enters its line in the safety rules.
+
 ## Board values
 
 `rootfs/overlay/usr/local/lib/tsx/board.sh` holds the values and the small

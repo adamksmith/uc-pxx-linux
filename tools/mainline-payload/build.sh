@@ -10,6 +10,7 @@
 #   tools/mainline-payload/build.sh build --snapshot DIR --resource FILE --vbmeta FILE --out DIR
 #                                         [--inputs FILE] [--authorized-keys FILE]
 #                                         [--headroom MIB] [--apk-url URL] [--keep-work]
+#                                         [--step2-bootctl-inst FILE]
 #
 # prime   Makes the input snapshot DIR (network): DIR/tsx is the published apk
 #         tree of tsx-aports (rootfs/fetch-apk-tree.sh, --channel, default the
@@ -68,10 +69,18 @@
 #             (docs/rootfs.md "Root login"). The inputs record the sha256.
 #             A payload with keys is for the units of the key owner only:
 #             build-info.txt says so. The root password stays locked.
+# --step2-bootctl-inst  a separate option, off by default
+#             (MAINLINE-STEP2-DESIGN Q-S8): the reviewed static
+#             uc-pxx-bootctl-inst r2 (sha256 20aa6bc5...). The rootfs gets it at
+#             /usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst (root, 0700) for
+#             step 2. RULES.md allows it in no slot today, and the installer
+#             gate refuses such a payload: it is for no unit before its RULES
+#             line. Without it the rootfs build stops on any file of that name.
+#             The inputs record the sha256 (or none).
 #
 # The inputs file: one KEY=VALUE per line, "#" lines are comments, each key
 # once, no other key:
-#   FORMAT              uc-pxx-mainline-payload-inputs-2
+#   FORMAT              uc-pxx-mainline-payload-inputs-3
 #   VERSION             the version of the manifest: a release tag or dev-<commit>
 #   SOURCE_DATE_EPOCH   seconds
 #   UC_PXX_LINUX_COMMIT HEAD of this checkout (a clean tree)
@@ -88,6 +97,7 @@
 #   IMG_HEADROOM_MB     free space in rootfs.ext4 (mkrootfs.sh; --headroom)
 #   TSX_APK_URL         the apk repository that the panel lists
 #   AUTHORIZED_KEYS_SHA256  none, or the sha256 of --authorized-keys
+#   STEP2_BOOTCTL_INST_SHA256  none, or the sha256 of --step2-bootctl-inst
 #   CROSS_CC_VERSION, CROSS_LD_VERSION, DTC_VERSION, MKBOOTIMG_SHA256
 #                       the host tools of kernel/mkimage.sh
 #
@@ -110,19 +120,21 @@ MKIMAGE_SHA=98ef579ce1f152463c8902c53c2f2f8edfbdfd6b8a0d40d650c59844d893703f
 ALPINE_REF_DEFAULT=alpine@sha256:e311ae748be7f56ae5cba304bc488f0786df68ee507513f654a5cc8597cffb42
 ALPINE=v3.24
 UPSTREAM=${UPSTREAM_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
-FMT=uc-pxx-mainline-payload-inputs-2
+FMT=uc-pxx-mainline-payload-inputs-3
+# uc-pxx-bootctl-inst r2 (RULES.md: the installer RAM image only; Q-S8: a step-2 rootfs)
+STEP2_INST_SHA=20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203
 KEYS="FORMAT VERSION SOURCE_DATE_EPOCH UC_PXX_LINUX_COMMIT KERNEL_REV MKIMAGE_SHA256 SHIM_SHA256
 RESOURCE_SHA256 VBMETA_SHA256 ALPINE_IMAGE ALPINE_IMAGE_ID ALPINE_SNAPSHOT TSX_SNAPSHOT PIP_SNAPSHOT PROFILE
-ROOTFS_UUID IMG_HEADROOM_MB TSX_APK_URL AUTHORIZED_KEYS_SHA256 CROSS_CC_VERSION CROSS_LD_VERSION
+ROOTFS_UUID IMG_HEADROOM_MB TSX_APK_URL AUTHORIZED_KEYS_SHA256 STEP2_BOOTCTL_INST_SHA256 CROSS_CC_VERSION CROSS_LD_VERSION
 DTC_VERSION MKBOOTIMG_SHA256"
 die() { echo "mainline-payload: $*" >&2; exit 1; }
-usage() { sed -n '9,12p' "$0" >&2; exit 2; }
+usage() { sed -n '9,13p' "$0" >&2; exit 2; }
 T0=$(date +%s)
 step() { echo "== $* ($(( $(date +%s) - T0 )) s)"; }
 sha() { sha256sum < "$1" | cut -c1-64; }
 
 CMD=${1:-}; [ $# -gt 0 ] && shift
-SNAP= RES= VBM= OUT= INPUTS= KEYSFILE= HEADROOM0= KEEP=0 CHANNEL=https://tsx-aports.unexceptional.net APKURL0=https://tsx-aports.unexceptional.net
+SNAP= RES= VBM= OUT= INPUTS= KEYSFILE= S2FILE= HEADROOM0= KEEP=0 CHANNEL=https://tsx-aports.unexceptional.net APKURL0=https://tsx-aports.unexceptional.net
 while [ $# -gt 0 ]; do
 	case $1 in
 	--snapshot) SNAP=${2:?}; shift;;
@@ -132,6 +144,7 @@ while [ $# -gt 0 ]; do
 	--out) OUT=${2:?}; shift;;
 	--inputs) INPUTS=${2:?}; shift;;
 	--authorized-keys) KEYSFILE=${2:?}; shift;;
+	--step2-bootctl-inst) S2FILE=${2:?}; shift;;
 	--channel) CHANNEL=${2:?}; shift;;
 	--apk-url) APKURL0=${2:?}; shift;;
 	--keep-work) KEEP=1;;
@@ -183,10 +196,11 @@ rootfs_build() {
 	env -u TSX_COMMON -u UC_PXX_DEV_OVERLAY -u UC_PXX_DEV_COMMON -u TSX_DEV_ROOT_HASH -u AUTHORIZED_KEYS \
 		-u KVER -u IMG_MB -u UC_PXX_SPLASH_SIZES -u TSX_DEV_RESCUE_KEYS -u TSX_DEV_RESCUE_HASH \
 		-u UC_PXX_APK_MIRROR -u UC_PXX_MIRROR_URL -u UC_PXX_DEV_OVERLAY -u RTL8363_INIT -u UC_PXX_BOOTCTL -u UC_PXX_REBOOT \
+		-u UC_PXX_STEP2_BOOTCTL_INST \
 		ALPINE=$ALPINE IMAGE="$IMAGE" PROFILE="$PROFILE" TSX_APK_LOCAL="$SNAP/tsx" \
 		TSX_APK_URL="$APKURL" TSX_BUILD_ID="$VERSION" SOURCE_DATE_EPOCH="$SDE" ROOTFS_UUID="$UUID" \
 		IMG_HEADROOM_MB="$HEADROOM" UC_PXX_PIP_CACHE="$pip" UC_PXX_DOCKER_NET="$net" \
-		AUTHORIZED_KEYS="$AKEYS" "$@" "$src/rootfs/build-rootfs.sh" all
+		AUTHORIZED_KEYS="$AKEYS" ${S2INST:+UC_PXX_STEP2_BOOTCTL_INST="$S2INST"} "$@" "$src/rootfs/build-rootfs.sh" all
 }
 
 # ---- the inputs ----------------------------------------------------------------
@@ -250,6 +264,16 @@ if [ -n "$KEYSFILE" ]; then
 	pin AUTHORIZED_KEYS_SHA256 "$(sha "$AKEYS")"
 else
 	pin AUTHORIZED_KEYS_SHA256 none
+fi
+S2INST=
+if [ -n "$S2FILE" ]; then
+	[ -f "$S2FILE" ] || die "--step2-bootctl-inst $S2FILE: no such file"
+	S2INST=$(readlink -f "$S2FILE")
+	pin STEP2_BOOTCTL_INST_SHA256 "$(sha "$S2INST")"
+	[ "${GOT[STEP2_BOOTCTL_INST_SHA256]}" = $STEP2_INST_SHA ] || die "--step2-bootctl-inst has sha256 ${GOT[STEP2_BOOTCTL_INST_SHA256]}, not the reviewed r2 $STEP2_INST_SHA"
+	echo "WARNING: a STEP-2 build (--step2-bootctl-inst): uc-pxx-bootctl-inst r2 in the rootfs; for no unit before its RULES line"
+else
+	pin STEP2_BOOTCTL_INST_SHA256 none
 fi
 
 if [ "$CMD" = prime ]; then
@@ -392,6 +416,11 @@ TOTAL=$((TS + RS + MS))
 	else
 		echo "root login: ssh keys only (authorized_keys sha256 ${GOT[AUTHORIZED_KEYS_SHA256]}), the root password locked;" \
 			"FOR THE UNITS OF THE KEY OWNER ONLY: never publish this payload for other users"
+	fi
+	if [ "${GOT[STEP2_BOOTCTL_INST_SHA256]}" = none ]; then
+		echo "uc-pxx-bootctl-inst: not in the rootfs (the default build)"
+	else
+		echo "uc-pxx-bootctl-inst: r2 ${GOT[STEP2_BOOTCTL_INST_SHA256]} at /usr/libexec/uc-pxx-step2 (a STEP-2 build: for no unit before its RULES line; the installer gate refuses it)"
 	fi
 	sed -n 's/^initramfs_\(sha256\|size\)=/initramfs (built into the Image) \1 /p' "$W/initramfs.info"
 	sed -n 's/^program_/initramfs program /p' "$W/initramfs.info"

@@ -155,6 +155,15 @@ tools/mainline-payload/build.sh build --snapshot SNAP --resource RESOURCE --vbme
   reproduction needs the same file. Without it the image has no ssh key and a
   locked root password ([rootfs.md](rootfs.md) "Root login"). Never give a
   private key: the build refuses a file with `PRIVATE KEY` in it.
+- `--step2-bootctl-inst FILE` is a separate option, off by default (step 2
+  of the mainline install, MAINLINE-STEP2-DESIGN Q-S8). `FILE` must be
+  `uc-pxx-bootctl-inst` r2 (sha256 `20aa6bc5...`); the rootfs gets it at
+  `/usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst` (root, mode 0700)
+  ([rootfs.md](rootfs.md) "uc-pxx-bootctl-inst in a step-2 build"). Today the
+  safety rules allow that tool in no slot, and the installer gate refuses such
+  a payload: it is for no unit before its rules line. The inputs record its
+  sha256 (`STEP2_BOOTCTL_INST_SHA256`, `none` without the option; inputs
+  format `uc-pxx-mainline-payload-inputs-3`).
 
 The outputs in `OUT`:
 

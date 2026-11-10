@@ -39,6 +39,12 @@
 #   PROFILE     console, kiosk or ha (default ha). It decides what the image
 #               holds. profiles/*.list, profile.sh and docs/rootfs.md
 #               "Profiles" say what each profile has.
+#   UC_PXX_STEP2_BOOTCTL_INST  optional, off by default: the reviewed static
+#               uc-pxx-bootctl-inst r2 (sha256 20aa6bc5...). It goes to
+#               /usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst (root, 0700) for
+#               step 2 of the mainline install (MAINLINE-STEP2-DESIGN Q-S8).
+#               Without it the build stops when any file of that name is in
+#               the image. A step-2 image is for no unit before its RULES line
 #   UC_PXX_DEV_OVERLAY  TEST ONLY. 1 builds without the uc-pxx packages
 #               (docs/rootfs.md "Test build without the uc-pxx packages"). It
 #               needs UC_PXX_BOOTCTL, UC_PXX_REBOOT and RTL8363_INIT (build-rootfs.sh).
@@ -412,6 +418,35 @@ if [ "$DEV" = 1 ]; then
 else
 	log "check the kernel package against kernel/KERNEL_REV.lts"
 	sh "$HERE/check-kernel-pins.sh" "$R" "$TOP/kernel" || { echo "ERROR: the kernel package in $TSX_APK_LOCAL does not match the kernel pin"; exit 1; }
+fi
+
+# uc-pxx-bootctl-inst in the root file system (MAINLINE-STEP2-DESIGN Q-S8,
+# §12 R-F item 3). RULES.md today: the two-slot A/B tool is never in system_a,
+# boot_a or a package. So by default (UC_PXX_STEP2_BOOTCTL_INST empty) the
+# image has no file of that name anywhere, and the build stops if a package
+# brought one. UC_PXX_STEP2_BOOTCTL_INST (a separate build option, off by
+# default) puts exactly the reviewed r2 binary 20aa6bc5... at the one fixed
+# path /usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst (root, 0700, its folder
+# 0700), for its one caller uc-pxx-step2. Such an image is for no unit until
+# the owner enters the RULES line (proposed text: MAINLINE-LINUX-INT-2026-11-10.md).
+STEP2_INST_SHA256=20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203
+STEP2_INST_PATH=usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst
+if [ -n "${UC_PXX_STEP2_BOOTCTL_INST:-}" ]; then
+	sum=$(sha256sum "$UC_PXX_STEP2_BOOTCTL_INST" | cut -d' ' -f1)
+	[ "$sum" = "$STEP2_INST_SHA256" ] || { echo "ERROR: UC_PXX_STEP2_BOOTCTL_INST has sha256 $sum, the reviewed r2 binary is $STEP2_INST_SHA256"; exit 1; }
+	install -d -m 700 -o 0 -g 0 $R/usr/libexec/uc-pxx-step2
+	install -m 700 -o 0 -g 0 "$UC_PXX_STEP2_BOOTCTL_INST" "$R/$STEP2_INST_PATH"
+	[ "$(sha256sum "$R/$STEP2_INST_PATH" | cut -d' ' -f1)" = "$STEP2_INST_SHA256" ] || { echo "ERROR: uc-pxx-bootctl-inst changed in the copy"; exit 1; }
+	mkdir -p $R/etc/tsx
+	echo "STEP-2 BUILD: /$STEP2_INST_PATH (uc-pxx-bootctl-inst r2 $STEP2_INST_SHA256). For no unit before its RULES line." > $R/etc/tsx/step2-bootctl-inst
+	log "STEP-2 BUILD (UC_PXX_STEP2_BOOTCTL_INST): uc-pxx-bootctl-inst r2 at /$STEP2_INST_PATH. For no unit before its RULES line"
+fi
+inst=$(cd $R && find . -name 'uc-pxx-bootctl-inst*' | sed 's#^\./##' | sort | tr '\n' ' ')
+if [ -n "${UC_PXX_STEP2_BOOTCTL_INST:-}" ]; then
+	[ "$inst" = "$STEP2_INST_PATH " ] || { echo "ERROR: uc-pxx-bootctl-inst files in the image: '$inst' (only /$STEP2_INST_PATH is allowed)"; exit 1; }
+else
+	[ -z "$inst" ] || { echo "ERROR: the image has uc-pxx-bootctl-inst ($inst): RULES.md allows it in no slot (a step-2 build needs UC_PXX_STEP2_BOOTCTL_INST)"; exit 1; }
+	[ ! -e $R/usr/libexec/uc-pxx-step2 ] || { echo "ERROR: the image has /usr/libexec/uc-pxx-step2 without UC_PXX_STEP2_BOOTCTL_INST"; exit 1; }
 fi
 
 log "manifest and sizes"

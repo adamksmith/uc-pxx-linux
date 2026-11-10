@@ -61,6 +61,8 @@ jobs:
         run: |
           printf 'FROM alpine:3.24\nRUN apk add --no-cache e2fsprogs util-linux-misc python3\n' | docker build -q -t uc-pxx-datatest -
           docker run --rm --privileged --network none -v "$PWD:/w:ro" uc-pxx-datatest sh /w/rootfs/tests/test-data-migrate.sh
+      - name: rootfs/tests/test-step2-inst.sh - uc-pxx-bootctl-inst only by the separate step-2 build option, at one path, 0700
+        run: busybox sh rootfs/tests/test-step2-inst.sh
       - name: rootfs/tests/test-board.sh - the board file, the MAC address from the cfg partition and the model
         run: sh rootfs/tests/test-board.sh
       - name: rootfs/tests/test-post-update.sh - uc-pxx-post-update with stubs for the boot control tools
