@@ -428,7 +428,7 @@ STEP2_MARKER = "etc/tsx/step2-bootctl-inst"
 STEP2_SET = {
     "usr/libexec/uc-pxx-step2": ("dir", 0o700),
     "usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst": ("20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203", 0o700),
-    "usr/libexec/uc-pxx-step2/uc-pxx-step2": ("3c2ba06f0f95d9224163fd4b20c44f0528c8053bd3be0f24660f1bc6a78de287", 0o700),
+    "usr/libexec/uc-pxx-step2/uc-pxx-step2": ("13ea2508e13f457d6ff2f5e26094fe5571ec8ed5c4c3d8237488eb5b6f44f735", 0o700),
     "etc/init.d/uc-pxx-step2": ("src:rootfs/step2/init.d/uc-pxx-step2", 0o755),
     "etc/conf.d/uc-pxx-step2": ("src:rootfs/step2/conf.d/uc-pxx-step2", 0o644),
     "etc/uc-pxx-step2": ("dir", 0o755),
