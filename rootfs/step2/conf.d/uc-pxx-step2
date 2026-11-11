@@ -1,0 +1,5 @@
+# /etc/conf.d/uc-pxx-step2: the step-2 service (STEP-2 BUILD only).
+# UC_PXX_STEP2_PAYLOAD: the uc-pxx-mainline folder of the payload on this unit.
+# Empty (the default): the service asks nothing. How the folder gets onto a
+# running unit is not decided yet (MAINLINE-STEP2-REST §6 item 1).
+UC_PXX_STEP2_PAYLOAD=

@@ -421,6 +421,20 @@ BOTH_SLOT_LIST = ("/usr/sbin/uc-pxx-bootctl", "/etc/uc-pxx-mark-boot.sh", "/etc/
                   "/usr/sbin/uc-pxx-post-update", "/usr/sbin/uc-pxx-slot")
 # files that are sourced, not run (mode 0644); every other checked file is 0755
 SOURCED = ("usr/local/lib/tsx/board.sh",)
+# A STEP-2 build (mkrootfs.sh UC_PXX_STEP2_BOOTCTL_INST): exactly these paths
+# (path -> (sha256 or a commit file, mode)); "dir" = a folder. Any of them in
+# an image without the marker /etc/tsx/step2-bootctl-inst says no.
+STEP2_MARKER = "etc/tsx/step2-bootctl-inst"
+STEP2_SET = {
+    "usr/libexec/uc-pxx-step2": ("dir", 0o700),
+    "usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst": ("20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203", 0o700),
+    "usr/libexec/uc-pxx-step2/uc-pxx-step2": ("b7710fa3f652f17f130201bd3c9cee713dbcd4ec6fd090edce6a4034a23ad92e", 0o700),
+    "etc/init.d/uc-pxx-step2": ("src:rootfs/step2/init.d/uc-pxx-step2", 0o755),
+    "etc/conf.d/uc-pxx-step2": ("src:rootfs/step2/conf.d/uc-pxx-step2", 0o644),
+    "etc/uc-pxx-step2": ("dir", 0o755),
+    "etc/uc-pxx-step2/supervised": ("any", 0o644),
+    "etc/runlevels/default/uc-pxx-step2": ("link:/etc/init.d/uc-pxx-step2", None),
+}
 
 
 def cpio_entries(data):
@@ -450,14 +464,18 @@ def cmd_both_slot(a):
     of the two pinned binaries. It is not a review: only the gate pins decide."""
     want = set(p for p, _ in BOTH_SLOT_ROOTFS) | {"usr/share/uc-pxx/boot-control.sha256", "etc/fstab",
                                                     "usr/sbin/uc-pxx-bootctl", "usr/sbin/uc-pxx-update-boot"}
-    rootfs, rmode, bad = {}, {}, []
+    rootfs, rmode, bad, step2 = {}, {}, [], {}
     with tarfile.open(a[0], "r:gz") as tf:
         for m in tf:
             n = re.sub(r"^(\./|/)+", "", m.name).rstrip("/")
             base = n.rsplit("/", 1)[-1]
-            if base.startswith("uc-pxx-bootctl-inst") or n in ("usr/libexec/uc-pxx-step2", "etc/tsx/dev-overlay",
-                                                               "etc/tsx/step2-bootctl-inst"):
-                bad.append("rootfs /%s present (uc-pxx-bootctl-inst, a step-2 or a DEV-overlay build)" % n)
+            if n == "etc/tsx/dev-overlay":
+                bad.append("rootfs /%s present (a DEV-overlay build)" % n)
+            if n == STEP2_MARKER or n in STEP2_SET or base.startswith("uc-pxx-bootctl-inst") or base.startswith("uc-pxx-step2"):
+                kind = "dir" if m.isdir() else "link:" + m.linkname if m.issym() else "file" if m.isreg() else "other"
+                data = tf.extractfile(m).read() if m.isreg() else None
+                step2[n] = (kind, m.mode & 0o7777, m.uid, m.gid, data)
+                continue
             if n in want:
                 if not m.isreg():
                     bad.append("rootfs /%s is not a regular file" % n)
@@ -528,6 +546,36 @@ def cmd_both_slot(a):
         print("boot-control.sha256: %d files: %s" % (len(names), " ".join(names)))
         if sorted(names) != sorted(BOTH_SLOT_LIST) or len(set(names)) != len(names):
             bad.append("boot-control.sha256 does not list exactly the %d files of the both-slot boot control" % len(BOTH_SLOT_LIST))
+    if STEP2_MARKER in step2:
+        got = {n: v for n, v in step2.items() if n != STEP2_MARKER}
+        for n in sorted(set(got) | set(STEP2_SET)):
+            if n not in STEP2_SET:
+                bad.append("step 2: /%s is not a file of a step-2 build" % n)
+                continue
+            if n not in got:
+                bad.append("step 2: /%s missing" % n)
+                continue
+            want_v, want_m = STEP2_SET[n]
+            kind, mode, uid, gid, data = got[n]
+            if want_v == "dir":
+                ok = kind == "dir"
+            elif want_v.startswith("link:"):
+                ok = kind == want_v
+            elif want_v == "any":
+                ok = kind == "file"
+            elif want_v.startswith("src:"):
+                ok = kind == "file" and data == read(os.path.join(a[2], want_v[4:]))
+            else:
+                ok = kind == "file" and sha256(data) == want_v
+            if not ok:
+                bad.append("step 2: /%s is not the pinned %s" % (n, want_v))
+            if want_m is not None and (mode != want_m or uid != 0 or gid != 0):
+                bad.append("step 2: /%s has mode %o %d:%d, not %o root" % (n, mode, uid, gid, want_m))
+        print("step2=yes (a STEP-2 build: r2, uc-pxx-step2 and the service checked)" if not [b for b in bad if b.startswith("step 2")] else "step2=bad")
+    else:
+        for n in sorted(step2):
+            bad.append("rootfs /%s present without a step-2 build (uc-pxx-bootctl-inst or step 2)" % n)
+        print("step2=no (a normal build: no file of step 2)")
     ref = read(os.path.join(a[2], "rootfs/overlay/etc/fstab"))
     if rootfs.get("etc/fstab") != ref:
         bad.append("the fstab is not the commit's (%s): a root or /data line by label, UUID or path is not both-slot"

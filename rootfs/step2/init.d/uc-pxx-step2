@@ -1,0 +1,45 @@
+#!/sbin/openrc-run
+# The step-2 service of the mainline install (uc-pxx-installer `uc-pxx-step2
+# service`, MAINLINE-STEP2-REST-2026-11-10.md §2.5). Only a STEP-2 BUILD has
+# this script (mkrootfs.sh, build option UC_PXX_STEP2_BOOTCTL_INST); a normal
+# image has no file of that name. It runs the program once per boot, in the
+# background: in a step-2 target it checks the RKSS ranges, the keeper and
+# the key at once (a STOP is shown and kept for the rest of the boot), waits for
+# the mark of this slot and finishes; in a keeper it records a failed target;
+# otherwise it may ask the question of step 2 (the payload folder of
+# /etc/conf.d/uc-pxx-step2; none = nothing to ask). With
+# /etc/uc-pxx-step2/supervised (a STEP-2 BUILD has it) it never runs a write
+# or a countdown by itself.
+#
+# As uc-pxx-boot-ok: no start-stop-daemon (the program ends by itself, and a
+# STOP keeps it, its locks and the screen), its own session (setsid), the pid
+# file once per boot. A stop does NOT end it: a running step 2 may be in the
+# middle of a write, and a write is never cut short by a signal; the program
+# ends by itself or by the restart it makes.
+description="Mainline step 2 (uc-pxx-step2 service)"
+prog=/usr/libexec/uc-pxx-step2/uc-pxx-step2
+prog_pidfile=/run/uc-pxx-step2.pid
+prog_log=/var/log/uc-pxx-step2.log
+depend() { need localmount; after uc-pxx-boot-ok uc-pxx-lvm kiosk; }
+
+start() {
+	ebegin "Starting uc-pxx-step2 service in the background"
+	if [ ! -x "$prog" ] || ! command -v setsid > /dev/null; then
+		eend 1 "$prog or setsid is missing"
+		return 1
+	fi
+	if [ -e "$prog_pidfile" ]; then
+		ewarn "uc-pxx-step2 service started before in this boot, it does not start again"
+		eend 0
+		return 0
+	fi
+	echo "== $(date -u '+%Y-%m-%dT%H:%M:%SZ') boot $(cat /proc/sys/kernel/random/boot_id 2> /dev/null)" >> "$prog_log"
+	setsid "$prog" service < /dev/null >> "$prog_log" 2>&1 &
+	echo $! > "$prog_pidfile"
+	eend 0
+}
+
+stop() {
+	ebegin "uc-pxx-step2 service: not stopped (it ends by itself)"
+	eend 0
+}

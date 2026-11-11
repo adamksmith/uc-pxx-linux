@@ -38,7 +38,9 @@
 #               uc-pxx-bootctl-inst r2 (sha256 20aa6bc5...). mkrootfs.sh puts it
 #               at /usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst (root, 0700).
 #               Without it the image has no file of that name (RULES.md). A
-#               step-2 image is for no unit before its RULES line
+#               step-2 image is for no unit before its RULES line. With it,
+#               UC_PXX_STEP2_BIN (required): the pinned uc-pxx-step2 binary;
+#               the image then also has the service uc-pxx-step2 (mkrootfs.sh)
 #   UC_PXX_DEV_APK_KEY  TEST ONLY: the public key (NAME.rsa.pub) of a private
 #               build of uc-pxx packages that are not published yet (a local
 #               apk tree signed with a key of the build host). mkrootfs.sh
@@ -324,6 +326,10 @@ rootfs() {
 	if [ -n "${UC_PXX_STEP2_BOOTCTL_INST:-}" ]; then
 		echo "WARNING: UC_PXX_STEP2_BOOTCTL_INST: a STEP-2 build with uc-pxx-bootctl-inst in the rootfs. For no unit before its RULES line."
 		in_file UC_PXX_STEP2_BOOTCTL_INST "$UC_PXX_STEP2_BOOTCTL_INST"
+		[ -n "${UC_PXX_STEP2_BIN:-}" ] || { echo "UC_PXX_STEP2_BOOTCTL_INST needs UC_PXX_STEP2_BIN (uc-pxx-step2)"; exit 1; }
+		in_file UC_PXX_STEP2_BIN "$UC_PXX_STEP2_BIN"
+	elif [ -n "${UC_PXX_STEP2_BIN:-}" ]; then
+		echo "UC_PXX_STEP2_BIN needs UC_PXX_STEP2_BOOTCTL_INST (a STEP-2 build)"; exit 1
 	fi
 	if [ -n "${UC_PXX_DEV_APK_KEY:-}" ]; then
 		[ -f "$UC_PXX_DEV_APK_KEY" ] || { echo "UC_PXX_DEV_APK_KEY=$UC_PXX_DEV_APK_KEY: no such file"; exit 1; }

@@ -219,13 +219,24 @@ slot (the markers removed) and sets the label `tsxdata-old`; after a restart,
 ### uc-pxx-bootctl-inst in a step-2 build
 
 `uc-pxx-bootctl-inst` (the two-slot A/B tool of the installer) is never in a
-normal image: `mkrootfs.sh` stops when any file of that name is in the tree.
-The separate build option `UC_PXX_STEP2_BOOTCTL_INST` (off by default; the
-payload option `--step2-bootctl-inst`) puts exactly the reviewed r2 binary
-(sha256 `20aa6bc5...`) at `/usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst`
-(root, mode 0700, its folder 0700) for its one caller, `uc-pxx-step2`. The
-image then has `/etc/tsx/step2-bootctl-inst`. Such an image is for no unit
-until the owner enters its line in the safety rules.
+normal image: `mkrootfs.sh` stops when any file of that name, or any file of
+step 2 (`uc-pxx-step2*`), is in the tree. The separate build option
+`UC_PXX_STEP2_BOOTCTL_INST` (off by default; the payload options
+`--step2-bootctl-inst` and `--step2-bin`) makes a STEP-2 BUILD:
+
+| Path | What |
+|---|---|
+| `/usr/libexec/uc-pxx-step2/` | root, mode 0700 |
+| `…/uc-pxx-bootctl-inst` | the reviewed r2 binary (sha256 `20aa6bc5...`), 0700 |
+| `…/uc-pxx-step2` | the pinned `uc-pxx-step2` of uc-pxx-installer (`UC_PXX_STEP2_BIN`, `ci/build-step2.sh`; the pin is in `mkrootfs.sh`), 0700 |
+| `/etc/init.d/uc-pxx-step2` | the OpenRC service (`rootfs/step2/`), in the default runlevel: it starts `uc-pxx-step2 service` once per boot in the background, and a stop never ends it |
+| `/etc/conf.d/uc-pxx-step2` | `UC_PXX_STEP2_PAYLOAD=` empty: the service asks nothing |
+| `/etc/uc-pxx-step2/supervised` | the supervised marker: the service never writes or counts down by itself |
+| `/etc/tsx/step2-bootctl-inst` | says that this is a step-2 build |
+
+The data tool of step 2 is `/usr/sbin/uc-pxx-data-migrate` of uc-pxx-board
+(sha256 `9162c65d...`); the build stops without it. Such an image is for no
+unit until the owner enters its lines in the safety rules.
 
 ### Packages of a private build (TEST ONLY)
 
