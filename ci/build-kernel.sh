@@ -27,7 +27,17 @@
 # Host packages: gcc-aarch64-linux-gnu, make, bc, bison, flex, libssl-dev,
 # libelf-dev, kmod, zstd, xz-utils, git.
 # Env: CROSS_COMPILE (default aarch64-linux-gnu-), KERNEL_REPO, DTB_NAMES (the
-# device trees to build, separated by spaces).
+# device trees to build, separated by spaces), KBUILD_BUILD_TIMESTAMP (default:
+# the commit time of the pinned revision, so the version banner and the Image
+# do not depend on the build time).
+#
+# A reproducible build: the release is always <version>-g<12 digits of the
+# pin> (the script stops when the checkout would give another name, for
+# example "-00022-g..." from tags that git describe finds: use a checkout
+# without tags; the fetch below takes none), the build timestamp is the
+# commit's, and the modules tarball is packed in name order with fixed times.
+# The output has build-info.txt: the release, the timestamp, the sha256 of the
+# initramfs and the versions of the compiler and the linker.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 FLAVOR= SRC= OUT= INITRAMFS= JOBS=$(nproc)
@@ -61,13 +71,17 @@ command -v "${CROSS}gcc" >/dev/null || { echo "build-kernel: no ${CROSS}gcc" >&2
 echo "== source: $REPO_URL $REV -> $SRC"
 if [ "$(git -C "$SRC" rev-parse HEAD 2>/dev/null || true)" != "$REV" ]; then
 	[ -d "$SRC/.git" ] || { mkdir -p "$SRC"; git -C "$SRC" init -q; git -C "$SRC" remote add origin "$REPO_URL"; }
-	# A blobless fetch keeps the history and the tags. So "make kernelrelease"
-	# can name the build like the packages expect, and the fetch loads only
-	# the files of the checkout.
-	git -C "$SRC" fetch -q --filter=blob:none --tags origin "$REV"
+	# A blobless fetch keeps the history and loads only the files of the
+	# checkout. No tags: with a tag in reach, setlocalversion would add the
+	# commit count to the release (6.18.54-00022-g...), not the name of the
+	# packages (6.18.54-g<12 digits>).
+	git -C "$SRC" fetch -q --filter=blob:none --no-tags origin "$REV"
 	git -C "$SRC" checkout -q --force "$REV"
 fi
 [ "$(git -C "$SRC" rev-parse HEAD)" = "$REV" ] || { echo "build-kernel: checkout is not at $REV" >&2; exit 1; }
+export KBUILD_BUILD_TIMESTAMP=${KBUILD_BUILD_TIMESTAMP:-$(git -C "$SRC" log -1 --format=%cD "$REV")}
+SDE=$(git -C "$SRC" log -1 --format=%ct "$REV")
+echo "build timestamp: $KBUILD_BUILD_TIMESTAMP"
 
 echo "== configure: defconfig + uc-pxx.config"
 rm -rf "$BUILD"; mkdir -p "$BUILD"
@@ -80,6 +94,12 @@ cp "$INITRAMFS" "$BUILD/initramfs.cpio"
 "$SRC/scripts/config" --file "$BUILD/.config" --set-str INITRAMFS_SOURCE initramfs.cpio \
 	-e RD_XZ -e INITRAMFS_COMPRESSION_XZ
 $M -s olddefconfig
+WANT_KREL="$($M -s kernelversion)-g$(printf '%s' "$REV" | cut -c1-12)"
+GOT_KREL=$($M -s kernelrelease)
+[ "$GOT_KREL" = "$WANT_KREL" ] || {
+	echo "build-kernel: the checkout gives the release $GOT_KREL, not $WANT_KREL (tags in reach of git describe, or a local change): use a checkout without tags" >&2
+	exit 1
+}
 
 echo "== build: Image, $DTBS"
 # shellcheck disable=SC2046 # one word per device tree
@@ -91,6 +111,7 @@ if grep -q '^CONFIG_MODULES=y' "$BUILD/.config"; then
 fi
 KREL=$(cat "$BUILD/include/config/kernel.release")
 echo "kernel release: $KREL"
+[ "$KREL" = "$WANT_KREL" ] || { echo "build-kernel: the build is $KREL, not $WANT_KREL" >&2; exit 1; }
 
 W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
 if [ "$MODULES" = yes ]; then
@@ -107,9 +128,18 @@ cp "$BUILD/arch/arm64/boot/Image" "$OUT/Image"
 for d in $DTBS; do cp "$BUILD/arch/arm64/boot/dts/rockchip/$d" "$OUT/$d"; done
 echo "$KREL" > "$OUT/kernel.release"
 echo "$REV" > "$OUT/kernel.commit"
-FILES="Image $DTBS kernel.release kernel.commit"
+{
+	echo "release=$KREL"
+	echo "commit=$REV"
+	echo "build_timestamp=$KBUILD_BUILD_TIMESTAMP"
+	echo "initramfs_sha256=$(sha256sum < "$INITRAMFS" | cut -c1-64)"
+	echo "cc=$("${CROSS}gcc" --version | head -n 1)"
+	echo "ld=$("${CROSS}ld" -v | head -n 1)"
+} > "$OUT/build-info.txt"
+FILES="Image $DTBS kernel.release kernel.commit build-info.txt"
 if [ "$MODULES" = yes ]; then
-	(cd "$W/mods" && tar --owner=0 --group=0 --numeric-owner -czf "$OUT/modules-$KREL.tar.gz" lib)
+	(cd "$W/mods" && find lib -exec touch -h -d "@$SDE" {} + &&
+		tar --sort=name --mtime="@$SDE" --owner=0 --group=0 --numeric-owner -cf - lib | gzip -n -6 > "$OUT/modules-$KREL.tar.gz")
 	FILES="$FILES modules-$KREL.tar.gz"
 fi
 # shellcheck disable=SC2086 # one word per file

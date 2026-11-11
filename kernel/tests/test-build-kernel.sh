@@ -36,5 +36,12 @@ grep -q 'cp "$INITRAMFS" "$BUILD/initramfs.cpio"' "$S" && ok "the script copies 
 for d in rk3399-crestron-ucp10.dtb rk3399-crestron-ucp8.dtb; do
 	grep -q "$d" "$S" && ok "builds $d" || bad "does not build $d"
 done
+echo "== reproducible build =="
+grep -q -- '--no-tags origin' "$S" && ok "the fetch takes no tags" || bad "the fetch takes tags"
+grep -q -- '--tags origin' "$S" && bad "a fetch with --tags" || ok "no fetch with --tags"
+grep -q 'KBUILD_BUILD_TIMESTAMP=${KBUILD_BUILD_TIMESTAMP:-$(git' "$S" && ok "the build timestamp defaults to the commit time" || bad "no default build timestamp"
+grep -q 'WANT_KREL=' "$S" && grep -q 'GOT_KREL" = "$WANT_KREL"' "$S" && ok "the release is checked before the build" || bad "no release check"
+grep -q 'tar --sort=name --mtime=' "$S" && grep -q 'gzip -n' "$S" && ok "the modules tarball is packed in order with fixed times" || bad "modules tarball not reproducible"
+grep -q 'build-info.txt' "$S" && ok "build-info.txt is written" || bad "no build-info.txt"
 echo "$N ok, $F failed"
 [ "$F" = 0 ]
