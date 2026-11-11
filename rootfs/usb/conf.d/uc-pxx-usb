@@ -1,0 +1,11 @@
+# /etc/conf.d/uc-pxx-usb: the USB interface of this mainline build (docs/usb.md).
+# The vendor interface (the status for the installer page; the finish of step 2)
+# is always on. It never offers a serial console.
+#
+# UC_PXX_USB_NET=on adds a USB network (NCM): this unit is 10.99.0.2/24 on it,
+# the computer 10.99.0.1. ssh takes a key only there (no password, no keyboard
+# login). OFF by default. Set it on only on a supervised or development unit,
+# with your key in /root/.ssh/authorized_keys, then: rc-service uc-pxx-usb restart.
+# While it is on, every service that this unit offers on its LAN can also be
+# reached from the computer on the cable.
+UC_PXX_USB_NET=off

@@ -1,5 +1,11 @@
 # /etc/conf.d/uc-pxx-step2: the step-2 service (STEP-2 BUILD only).
 # UC_PXX_STEP2_PAYLOAD: the uc-pxx-mainline folder of the payload on this unit.
-# Empty (the default): the service asks nothing. How the folder gets onto a
-# running unit is not decided yet (MAINLINE-STEP2-REST §6 item 1).
-UC_PXX_STEP2_PAYLOAD=
+# UC_PXX_STEP2_USB=yes: the payload comes over the USB cable from the installer
+# page (uc-pxx-installer mainline-rc-4: the service takes the USB interface
+# from uc-pxx-usb while step 2 waits, receives the payload into RAM and seals
+# it in the folder below; owner Q-S1 2026-11-11). The receive runs only when
+# UC_PXX_STEP2_PAYLOAD is exactly that sealed folder. On a supervised unit
+# (/etc/uc-pxx-step2/supervised) only after a supervised session made
+# /run/uc-pxx-step2/usb-receive.
+UC_PXX_STEP2_PAYLOAD=/run/uc-pxx-step2/stage/payload/uc-pxx-mainline
+UC_PXX_STEP2_USB=yes

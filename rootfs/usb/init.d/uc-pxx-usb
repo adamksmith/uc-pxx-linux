@@ -1,0 +1,57 @@
+#!/sbin/openrc-run
+# The USB interface of every mainline build (uc-pxx-installer `uc-pxx-xfer
+# usb`; mainline-rc-4, owner decisions 2026-11-11; docs/usb.md). The vendor
+# interface (WebUSB) of the step-2 transport on the USB-C port, always:
+#  - the status for the installer page (read only);
+#  - in a normal build that is an unfinished step-2 target: the receive of the
+#    PINNED finish executor of step 2 (the two files that
+#    /usr/share/uc-pxx-usb/finish.json names by size and sha256) into RAM,
+#    their check and seal in /run/uc-pxx-finish, and the finish from there,
+#    once per boot (it writes nothing by itself before the reviewed finish
+#    rules say so; nothing is installed);
+#  - in a STEP-2 build the step-2 service stops this service while step 2
+#    waits for its payload and receives it itself.
+# The receiver runs as the user uc-pxx-xfer (no eMMC code). UC_PXX_USB_NET=on
+# in /etc/conf.d/uc-pxx-usb (OFF by default) adds a USB network function
+# (NCM) with ssh by key only; there is never a serial console.
+description="The USB interface of the mainline build (uc-pxx-xfer usb)"
+command=/usr/libexec/uc-pxx-xfer/uc-pxx-xfer
+command_args="usb"
+supervisor=supervise-daemon
+respawn_delay=2
+respawn_max=10
+respawn_period=600
+output_log=/var/log/uc-pxx-usb.log
+error_log=/var/log/uc-pxx-usb.log
+depend() { need localmount; after bootmisc udev; }
+
+start_pre() {
+	if ! grep -q ' /sys/kernel/config configfs ' /proc/mounts; then
+		mount -t configfs configfs /sys/kernel/config || return 1
+	fi
+	case "${UC_PXX_USB_NET:-off}" in
+	on) command_args="usb --net"; einfo "the USB network (NCM) is on: ssh by key only on 10.99.0.2" ;;
+	off) ;;
+	*) ewarn "UC_PXX_USB_NET=${UC_PXX_USB_NET}: not on or off, taken as off" ;;
+	esac
+	return 0
+}
+
+# The unit's address on the USB network (only with UC_PXX_USB_NET=on): set when
+# the network function is bound (the computer is 10.99.0.1).
+start_post() {
+	[ "${UC_PXX_USB_NET:-off}" = on ] || return 0
+	(
+		f=/sys/kernel/config/usb_gadget/uc-pxx-step2/functions/ncm.usb0/ifname
+		i=0
+		while [ $i -lt 120 ]; do
+			n=$(cat $f 2> /dev/null)
+			case "$n" in usb*) [ -e "/sys/class/net/$n" ] && break ;; esac
+			sleep 1
+			i=$((i + 1))
+		done
+		[ -n "$n" ] && ip addr add 10.99.0.2/24 dev "$n" 2> /dev/null
+		[ -n "$n" ] && ip link set "$n" up
+	) > /dev/null 2>&1 &
+	return 0
+}

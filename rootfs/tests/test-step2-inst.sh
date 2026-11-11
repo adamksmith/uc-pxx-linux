@@ -59,7 +59,7 @@ grep -q 'For no unit before its RULES line' "$T/R/etc/tsx/step2-bootctl-inst" &&
 cmp -s "$HERE/step2/init.d/uc-pxx-step2" "$T/R/etc/init.d/uc-pxx-step2" && [ "$(stat -c %a "$T/R/etc/init.d/uc-pxx-step2")" = 755 ] && ok "on: the service script" || bad "on: the service script"
 grep -Eq '^depend\(\) \{ need localmount; after ([a-z0-9-]+ )*tsx-autoupdate( [a-z0-9-]+)*; \}$' "$T/R/etc/init.d/uc-pxx-step2" && ok "on: the service starts after tsx-autoupdate (STOP hold, second layer)" || bad "on: the service is not ordered after tsx-autoupdate"
 [ "$(readlink "$T/R/etc/runlevels/default/uc-pxx-step2")" = /etc/init.d/uc-pxx-step2 ] && ok "on: the service in the default runlevel" || bad "on: not in the default runlevel"
-grep -qx 'UC_PXX_STEP2_PAYLOAD=' "$T/R/etc/conf.d/uc-pxx-step2" && ok "on: the conf file names no payload (the service asks nothing)" || bad "on: the conf file"
+grep -qx 'UC_PXX_STEP2_PAYLOAD=/run/uc-pxx-step2/stage/payload/uc-pxx-mainline' "$T/R/etc/conf.d/uc-pxx-step2" && grep -qx 'UC_PXX_STEP2_USB=yes' "$T/R/etc/conf.d/uc-pxx-step2" && ok "on: the conf file names the sealed RAM folder of the USB receive (mainline-rc-4)" || bad "on: the conf file"
 [ -s "$T/R/etc/uc-pxx-step2/supervised" ] && ok "on: the supervised marker" || bad "on: no supervised marker"
 rc=$(step touch "$T/R/usr/sbin/uc-pxx-bootctl-inst"); [ "$rc" != 0 ] && grep -q 'only /usr/libexec' "$T/out" && ok "on, a second copy elsewhere: the build stops" || bad "on with a second copy: rc $rc"
 rc=$(step sh -c "mkdir -p $T/R/usr/local/sbin; touch $T/R/usr/local/sbin/uc-pxx-step2-extra"); [ "$rc" != 0 ] && grep -q 'uc-pxx-step2 files in the image' "$T/out" && ok "on, a stray uc-pxx-step2 file: the build stops" || bad "on with a stray step-2 file: rc $rc"

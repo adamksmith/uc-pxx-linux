@@ -39,6 +39,10 @@
 #   PROFILE     console, kiosk or ha (default ha). It decides what the image
 #               holds. profiles/*.list, profile.sh and docs/rootfs.md
 #               "Profiles" say what each profile has.
+#   UC_PXX_XFER_BIN  the pinned uc-pxx-xfer (uc-pxx-installer ci/build-xfer.sh,
+#               XFER_SHA256 below): the USB set of a both-slot build (the
+#               WebUSB interface of every mainline build, docs/usb.md). Without
+#               it the build stops when a file of the set is in the image
 #   UC_PXX_STEP2_BIN  with UC_PXX_STEP2_BOOTCTL_INST only (required then): the
 #               pinned uc-pxx-step2 (uc-pxx-installer ci/build-step2.sh), see
 #               the step-2 step below
@@ -468,6 +472,61 @@ else
 	sh "$HERE/check-kernel-pins.sh" "$R" "$TOP/kernel" || { echo "ERROR: the kernel package in $TSX_APK_LOCAL does not match the kernel pin"; exit 1; }
 fi
 
+# The USB set (uc-pxx-installer mainline-rc-4; owner decisions 2026-11-11,
+# docs/usb.md): every both-slot build (normal and STEP-2) brings up the WebUSB
+# vendor interface of uc-pxx-xfer on its USB-C port. UC_PXX_XFER_BIN (the
+# pinned uc-pxx-xfer, uc-pxx-installer ci/build-xfer.sh) adds:
+#   /usr/libexec/uc-pxx-xfer/uc-pxx-xfer (root, 0755: the receiver runs it as
+#     the user uc-pxx-xfer), the OpenRC service uc-pxx-usb (default runlevel)
+#     and its conf file (UC_PXX_USB_NET=off: the USB network + ssh setting),
+#   /usr/share/uc-pxx-usb/finish.json (the slot's pinned finish set: the finish
+#     executor uc-pxx-step2-finish and uc-pxx-bootctl-inst r2 by size and
+#     sha256; neither file is in the image),
+#   /etc/ssh/sshd_config.d/uc-pxx-usb.conf (ssh by key only on the USB network),
+#   the system user and group uc-pxx-xfer (uid and gid 990, no shell, no home,
+#     no other group).
+# Never a serial console (no getty on ttyGS*) and no other gadget function.
+# Only for a both-slot image (uc-pxx-lvm mounts /data itself); the installer's
+# both-slot gate pins each of these files (internal/mainline bothSlotUSB) and
+# refuses them in a slot-A payload. Without UC_PXX_XFER_BIN no file of these
+# names may be in the image.
+XFER_SHA256=d7db68aba33d2ac4fcb32457957065527939f10322f9f2c77790a12817d275b9
+XFER_PATH=usr/libexec/uc-pxx-xfer/uc-pxx-xfer
+XFER_ID=990
+USB_FILES="etc/conf.d/uc-pxx-usb etc/init.d/uc-pxx-usb etc/runlevels/default/uc-pxx-usb etc/ssh/sshd_config.d/uc-pxx-usb.conf usr/libexec/uc-pxx-xfer usr/libexec/uc-pxx-xfer/uc-pxx-xfer usr/share/uc-pxx-usb "
+if [ -n "${UC_PXX_XFER_BIN:-}" ]; then
+	sum=$(sha256sum "$UC_PXX_XFER_BIN" | cut -d' ' -f1)
+	[ "$sum" = "$XFER_SHA256" ] || { echo "ERROR: UC_PXX_XFER_BIN has sha256 $sum, the pinned uc-pxx-xfer is $XFER_SHA256"; exit 1; }
+	[ -e $R/etc/init.d/uc-pxx-lvm ] && grep -qx '# uc-pxx-data-mount: 1' $R/etc/init.d/uc-pxx-lvm ||
+		{ echo "ERROR: the USB set (UC_PXX_XFER_BIN) is for a both-slot image only (uc-pxx-lvm must mount /data)"; exit 1; }
+	! grep -q "^[^:]*:[^:]*:$XFER_ID:" $R/etc/passwd && ! grep -q "^[^:]*:[^:]*:$XFER_ID:" $R/etc/group &&
+		! grep -q '^uc-pxx-xfer:' $R/etc/passwd $R/etc/group ||
+		{ echo "ERROR: uid/gid $XFER_ID or the name uc-pxx-xfer is taken in the image"; exit 1; }
+	echo "uc-pxx-xfer:x:$XFER_ID:$XFER_ID:uc-pxx USB receiver:/nonexistent:/sbin/nologin" >> $R/etc/passwd
+	echo "uc-pxx-xfer:x:$XFER_ID:" >> $R/etc/group
+	echo "uc-pxx-xfer:!:::::::" >> $R/etc/shadow
+	install -d -m 755 -o 0 -g 0 $R/usr/libexec/uc-pxx-xfer $R/usr/share/uc-pxx-usb $R/etc/ssh/sshd_config.d
+	install -m 755 -o 0 -g 0 "$UC_PXX_XFER_BIN" "$R/$XFER_PATH"
+	[ "$(sha256sum "$R/$XFER_PATH" | cut -d' ' -f1)" = "$XFER_SHA256" ] || { echo "ERROR: uc-pxx-xfer changed in the copy"; exit 1; }
+	install -m 755 -o 0 -g 0 "$HERE/usb/init.d/uc-pxx-usb" $R/etc/init.d/uc-pxx-usb
+	install -m 644 -o 0 -g 0 "$HERE/usb/conf.d/uc-pxx-usb" $R/etc/conf.d/uc-pxx-usb
+	install -m 644 -o 0 -g 0 "$HERE/usb/finish.json" $R/usr/share/uc-pxx-usb/finish.json
+	install -m 644 -o 0 -g 0 "$HERE/usb/sshd_config.d/uc-pxx-usb.conf" $R/etc/ssh/sshd_config.d/uc-pxx-usb.conf
+	ln -sf /etc/init.d/uc-pxx-usb $R/etc/runlevels/default/uc-pxx-usb
+	grep -q '^Include /etc/ssh/sshd_config.d/\*\.conf' $R/etc/ssh/sshd_config ||
+		{ echo "ERROR: /etc/ssh/sshd_config does not include sshd_config.d (the key-only rule of the USB network)"; exit 1; }
+	grep -qx 'UC_PXX_USB_NET=off' $R/etc/conf.d/uc-pxx-usb || { echo "ERROR: the USB network setting is not off by default"; exit 1; }
+	log "the USB set: uc-pxx-xfer $XFER_SHA256, the service uc-pxx-usb (the USB network off), the finish list, the user uc-pxx-xfer ($XFER_ID)"
+fi
+usb=$(cd $R && find . \( -name 'uc-pxx-xfer*' -o -name 'uc-pxx-usb*' \) | sed 's#^\./##' | sort | tr '\n' ' ')
+if [ -n "${UC_PXX_XFER_BIN:-}" ]; then
+	[ "$usb" = "$USB_FILES" ] || { echo "ERROR: the USB set in the image is '$usb', not exactly '$USB_FILES'"; exit 1; }
+else
+	[ -z "$usb" ] || { echo "ERROR: the image has files of the USB set ($usb) without UC_PXX_XFER_BIN"; exit 1; }
+fi
+# no serial console on the USB port, ever (owner 2026-11-11)
+! grep -v '^[[:space:]]*#' $R/etc/inittab | grep -q 'ttyGS' || { echo "ERROR: /etc/inittab has a getty on a USB serial gadget (ttyGS*)"; exit 1; }
+
 # uc-pxx-bootctl-inst in the root file system (MAINLINE-STEP2-DESIGN Q-S8,
 # §12 R-F item 3). RULES.md today: the two-slot A/B tool is never in system_a,
 # boot_a or a package. So by default (UC_PXX_STEP2_BOOTCTL_INST empty) the
@@ -487,10 +546,11 @@ fi
 # MAINLINE-LINUX-INT-2026-11-10.md R-F.3, BOTH-SLOT-PACKAGING-2026-11-10.md).
 STEP2_INST_SHA256=20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203
 STEP2_INST_PATH=usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst
-# uc-pxx-step2 of uc-pxx-installer mainline-rc-3 3c397a7 (ci/build-step2.sh,
-# built twice byte-identical; it replaces 7049463f... of d754663, 13ea2508... of 6aab316, 3c2ba06f... of mainline-rc-2 d105ba2, b8c2a6d9... of c0d8f0b, 1cbb32ae... of mainline-rc be239e3,
+# uc-pxx-step2 of uc-pxx-installer mainline-rc-4 22eaf31 (ci/build-step2.sh,
+# built twice byte-identical; the USB receive of the payload, the finish
+# service; it replaces 524e89ba... of mainline-rc-3 3c397a7, 7049463f... of d754663, 13ea2508... of 6aab316, 3c2ba06f... of mainline-rc-2 d105ba2, b8c2a6d9... of c0d8f0b, 1cbb32ae... of mainline-rc be239e3,
 # f7cc1d33... of 1605579, a4e753cc... of 9627b27 and b7710fa3... of mainline-step2-rest b9b2e98); NOT yet reviewed for the safety rules: a new build needs a new pin here
-STEP2_BIN_SHA256=524e89ba9cd6387a9f6d411169d215bda90d75087e2a6e4e9cc99fb1be5f6b48
+STEP2_BIN_SHA256=b857680f0b063a8e1f8e548ef480dc170817ce0adeb1b7271cfb65a76472e7dd
 STEP2_BIN_PATH=usr/libexec/uc-pxx-step2/uc-pxx-step2
 STEP2_DATA_SHA256=9162c65df08ac5577e38a2fe124d8cb1434b9b2bcfe787d6fba76055b8006791
 STEP2_DATA_PATH=usr/sbin/uc-pxx-data-migrate
@@ -523,7 +583,7 @@ inst=$(cd $R && find . -name 'uc-pxx-bootctl-inst*' | sed 's#^\./##' | sort | tr
 s2=$(cd $R && find . -name 'uc-pxx-step2*' | sed 's#^\./##' | sort | tr '\n' ' ')
 # a copy of r2 or uc-pxx-step2 under another name, by its bytes (review r2):
 # only files of their sizes are hashed
-cp2=$(cd $R && find . -type f \( -size ${STEP2_INST_SIZE:-777976}c -o -size ${STEP2_BIN_SIZE:-4849824}c \) -exec sha256sum {} + |
+cp2=$(cd $R && find . -type f \( -size ${STEP2_INST_SIZE:-777976}c -o -size ${STEP2_BIN_SIZE:-4980896}c \) -exec sha256sum {} + |
 	awk -v a="$STEP2_INST_SHA256" -v b="$STEP2_BIN_SHA256" -v pa="./$STEP2_INST_PATH" -v pb="./$STEP2_BIN_PATH" \
 		'($1 == a && $2 != pa) || ($1 == b && $2 != pb) { print $2 }' | tr '\n' ' ')
 [ -z "$cp2" ] || { echo "ERROR: copies of uc-pxx-bootctl-inst or uc-pxx-step2 in the image: $cp2"; exit 1; }

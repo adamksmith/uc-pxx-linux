@@ -33,6 +33,8 @@
 #               "initramfs" puts it into the rescue. The DEV mode puts it into
 #               the rootfs. The binary links with the Realtek SDK and is not
 #               part of this repository.
+#   UC_PXX_XFER_BIN  the pinned uc-pxx-xfer: the USB set of a both-slot build
+#               (mkrootfs.sh, docs/usb.md)
 #   UC_PXX_STEP2_BOOTCTL_INST  optional, off by default (a separate build
 #               option, MAINLINE-STEP2-DESIGN Q-S8): the reviewed static
 #               uc-pxx-bootctl-inst r2 (sha256 20aa6bc5...). mkrootfs.sh puts it
@@ -331,6 +333,8 @@ rootfs() {
 	elif [ -n "${UC_PXX_STEP2_BIN:-}" ]; then
 		echo "UC_PXX_STEP2_BIN needs UC_PXX_STEP2_BOOTCTL_INST (a STEP-2 build)"; exit 1
 	fi
+	# the USB set of a both-slot build (mkrootfs.sh UC_PXX_XFER_BIN)
+	in_file UC_PXX_XFER_BIN "${UC_PXX_XFER_BIN:-}"
 	if [ -n "${UC_PXX_DEV_APK_KEY:-}" ]; then
 		[ -f "$UC_PXX_DEV_APK_KEY" ] || { echo "UC_PXX_DEV_APK_KEY=$UC_PXX_DEV_APK_KEY: no such file"; exit 1; }
 		case ${UC_PXX_DEV_APK_KEY##*/} in
