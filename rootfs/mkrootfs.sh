@@ -45,6 +45,12 @@
 #               step 2 of the mainline install (MAINLINE-STEP2-DESIGN Q-S8).
 #               Without it the build stops when any file of that name is in
 #               the image. A step-2 image is for no unit before its RULES line
+#   UC_PXX_DEV_APK_KEY  TEST ONLY: the public key NAME.rsa.pub of a private
+#               build of uc-pxx packages (a local apk tree signed on the build
+#               host). It is trusted for the package install only. The image
+#               never trusts it: it is removed from $R/etc/apk/keys, and
+#               /etc/tsx/dev-apk-key records its name and sha256. Never publish
+#               such an image
 #   UC_PXX_DEV_OVERLAY  TEST ONLY. 1 builds without the uc-pxx packages
 #               (docs/rootfs.md "Test build without the uc-pxx packages"). It
 #               needs UC_PXX_BOOTCTL, UC_PXX_REBOOT and RTL8363_INIT (build-rootfs.sh).
@@ -126,6 +132,18 @@ rm -rf $R; mkdir -p $R/etc/apk/keys
 # trust this project's signing key (the same .pub the tsx-keys package ships)
 cp "$HERE"/overlay/etc/apk/keys/*.rsa.pub /etc/apk/keys/
 cp -a /etc/apk/keys/. $R/etc/apk/keys/
+# A private package build (TEST ONLY): its key for the install, never in the image
+DEVKEY=
+if [ -n "${UC_PXX_DEV_APK_KEY:-}" ]; then
+	DEVKEY=${UC_PXX_DEV_APK_KEY##*/}
+	case $DEVKEY in *[!A-Za-z0-9._-]*|.*) echo "UC_PXX_DEV_APK_KEY: a bad file name"; exit 1;; *.rsa.pub) ;; *) echo "UC_PXX_DEV_APK_KEY: the name must end in .rsa.pub"; exit 1;; esac
+	for k in "$HERE"/overlay/etc/apk/keys/*.rsa.pub; do
+		[ "${k##*/}" != "$DEVKEY" ] || { echo "UC_PXX_DEV_APK_KEY has the name of the project key"; exit 1; }
+	done
+	cp "$UC_PXX_DEV_APK_KEY" /etc/apk/keys/"$DEVKEY"
+	DEVKEY_SHA=$(sha256sum "$UC_PXX_DEV_APK_KEY" | cut -d' ' -f1)
+	log "TEST BUILD (UC_PXX_DEV_APK_KEY): packages signed by $DEVKEY ($DEVKEY_SHA) are trusted for this install only"
+fi
 # The profile picks the packages (profiles/*.list). The lines keep the order
 # of packages.txt and packages-tsx.txt.
 PKGS=$(sh "$HERE/profile.sh" packages "$PROFILE" "$HERE/packages.txt" | tr '\n' ' ')
@@ -152,6 +170,11 @@ cat /etc/apk/repositories >> /build/repositories
 apk add --root $R --initdb --no-cache -q --keys-dir /etc/apk/keys \
 	--repositories-file /build/repositories $PKGS
 cp -a /etc/apk/keys $R/etc/apk/
+if [ -n "$DEVKEY" ]; then
+	rm -f "$R/etc/apk/keys/$DEVKEY"
+	mkdir -p $R/etc/tsx
+	echo "TEST BUILD: the uc-pxx packages of this image come from a private build, signed by $DEVKEY (sha256 $DEVKEY_SHA). The image does not trust that key. Never publish this image." > $R/etc/tsx/dev-apk-key
+fi
 # the panel's list: this project's two repositories FIRST (common + uc-pxx,
 # never another platform's). The block, marker line included, is what
 # tsx-config apply writes.
@@ -478,6 +501,7 @@ apk info --root $R -v 2>/dev/null | sort > "$OUT/rootfs.manifest"
 	echo "profile: $PROFILE"
 	if [ "$DEV" = 1 ]; then echo "image source: TEST BUILD (UC_PXX_DEV_OVERLAY=1), common packages and the repository files"
 	else echo "image source: packages (uc-pxx-$PROFILE)"; fi
+	[ -z "$DEVKEY" ] || echo "image source: TEST BUILD, the uc-pxx packages signed by $DEVKEY (sha256 $DEVKEY_SHA), not published"
 	echo "root password: $ROOT_PW_RESULT"
 	echo "tsx-aports: installed from a local tree: $TSXPKGS"
 	echo "tsx-aports: panel repository URL $TSX_APK_URL/$ALPINE/{common,uc-pxx}"

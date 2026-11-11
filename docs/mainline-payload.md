@@ -162,8 +162,34 @@ tools/mainline-payload/build.sh build --snapshot SNAP --resource RESOURCE --vbme
   ([rootfs.md](rootfs.md) "uc-pxx-bootctl-inst in a step-2 build"). Today the
   safety rules allow that tool in no slot, and the installer gate refuses such
   a payload: it is for no unit before its rules line. The inputs record its
-  sha256 (`STEP2_BOOTCTL_INST_SHA256`, `none` without the option; inputs
-  format `uc-pxx-mainline-payload-inputs-3`).
+  sha256 (`STEP2_BOOTCTL_INST_SHA256`, `none` without the option).
+- `--dev-apk-key NAME.rsa.pub` (TEST ONLY) lets the rootfs build install uc-pxx
+  packages of a private build that are not published yet (for example the
+  both-slot packages of tsx-aports before their tag): the snapshot's `tsx/`
+  tree holds them, signed by a key of the build host. The build trusts that
+  key for the package install only. The image never trusts it (its
+  `/etc/apk/keys` holds only the project key) and has `/etc/tsx/dev-apk-key`;
+  `build-info.txt` says "DEV PACKAGES". The inputs record the sha256 of the key
+  (`DEV_APK_KEY_SHA256`, `none` without it). Never publish such a payload.
+- `--require-both-slot` stops the build unless the payload is a both-slot
+  build of the commit (below).
+
+The inputs format is `uc-pxx-mainline-payload-inputs-4`.
+
+### Both-slot build
+
+A payload can go into slot B only when its rootfs and its initramfs hold the
+both-slot boot control (MAINLINE-STEP2-DESIGN section 10). `payload.py
+both-slot` compares, byte for byte with the commit of the build: the
+boot-control, slot and data files of the rootfs (from the packages
+uc-pxx-boot-tools and uc-pxx-board), and `/init`, `rcS`, `uc-pxx-findfs`,
+`uc-pxx-install-rootfs`, the `tsx-data-backup` wrapper, `uc-pxx-rescue-help`,
+`uc-pxx-slot` and `uc-pxx-reboot` of the initramfs in the Linux Image of the
+kernel package. `/usr/share/uc-pxx/boot-control.sha256` must name
+`/usr/sbin/uc-pxx-slot` and match the files, and the fstab must name no file
+system by `LABEL=` or `UUID=`. The verdict goes to `both-slot.txt` (one line
+per file with its sha256) and to `build-info.txt`. A build with the packages of
+an older release says "both-slot build: NO": that payload is for slot A only.
 
 The outputs in `OUT`:
 
@@ -173,6 +199,7 @@ The outputs in `OUT`:
 | `inputs.txt` | The inputs of the build (the format is in the header of `build.sh`) |
 | `build-info.txt` | Sizes, the cap verdict, the drive verdict, the initramfs facts |
 | `rootfs.manifest`, `rootfs.sizes` | The package versions and sizes of the rootfs |
+| `both-slot.txt` | The both-slot check (above): each file, its sha256 and the verdict |
 | `SHA256SUMS` | The payload files, `inputs.txt` and `rootfs.manifest` |
 
 ### What makes the build reproducible

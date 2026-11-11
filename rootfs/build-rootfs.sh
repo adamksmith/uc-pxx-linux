@@ -39,6 +39,12 @@
 #               at /usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst (root, 0700).
 #               Without it the image has no file of that name (RULES.md). A
 #               step-2 image is for no unit before its RULES line
+#   UC_PXX_DEV_APK_KEY  TEST ONLY: the public key (NAME.rsa.pub) of a private
+#               build of uc-pxx packages that are not published yet (a local
+#               apk tree signed with a key of the build host). mkrootfs.sh
+#               trusts it for the package install only; the image never gets
+#               it (/etc/apk/keys holds only the project key), and
+#               /etc/tsx/dev-apk-key names it. Never publish such an image
 #   UC_PXX_DEV_OVERLAY  TEST ONLY. 1 builds the rootfs without the uc-pxx
 #               packages, from the files of this repository (docs/rootfs.md
 #               "Test build without the uc-pxx packages"). The image gets the Alpine
@@ -318,6 +324,17 @@ rootfs() {
 	if [ -n "${UC_PXX_STEP2_BOOTCTL_INST:-}" ]; then
 		echo "WARNING: UC_PXX_STEP2_BOOTCTL_INST: a STEP-2 build with uc-pxx-bootctl-inst in the rootfs. For no unit before its RULES line."
 		in_file UC_PXX_STEP2_BOOTCTL_INST "$UC_PXX_STEP2_BOOTCTL_INST"
+	fi
+	if [ -n "${UC_PXX_DEV_APK_KEY:-}" ]; then
+		[ -f "$UC_PXX_DEV_APK_KEY" ] || { echo "UC_PXX_DEV_APK_KEY=$UC_PXX_DEV_APK_KEY: no such file"; exit 1; }
+		case ${UC_PXX_DEV_APK_KEY##*/} in
+		*[!A-Za-z0-9._-]*|.*) echo "UC_PXX_DEV_APK_KEY: a bad file name"; exit 1;;
+		*.rsa.pub) ;;
+		*) echo "UC_PXX_DEV_APK_KEY: the name must end in .rsa.pub (the name of the signing key)"; exit 1;;
+		esac
+		echo "WARNING: UC_PXX_DEV_APK_KEY: TEST BUILD with packages signed by ${UC_PXX_DEV_APK_KEY##*/}. Never publish this image."
+		dargs+=(-v "$(readlink -f "$UC_PXX_DEV_APK_KEY"):/in/devkey/${UC_PXX_DEV_APK_KEY##*/}:ro" \
+			-e UC_PXX_DEV_APK_KEY="/in/devkey/${UC_PXX_DEV_APK_KEY##*/}")
 	fi
 	# the build mirror: a local snapshot, a URL, or the default of mkrootfs.sh
 	if [ -n "${UC_PXX_APK_MIRROR:-}" ]; then

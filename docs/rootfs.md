@@ -227,6 +227,15 @@ payload option `--step2-bootctl-inst`) puts exactly the reviewed r2 binary
 image then has `/etc/tsx/step2-bootctl-inst`. Such an image is for no unit
 until the owner enters its line in the safety rules.
 
+### Packages of a private build (TEST ONLY)
+
+`UC_PXX_DEV_APK_KEY=NAME.rsa.pub` (payload option `--dev-apk-key`) installs
+uc-pxx packages that are not published yet from `TSX_APK_LOCAL`, signed by a
+key of the build host. `mkrootfs.sh` trusts the key for the install only and
+removes it from the image's `/etc/apk/keys`, so the panel trusts only the
+project key. The image has `/etc/tsx/dev-apk-key` (the name and the sha256 of
+the key), and `rootfs.sizes` says so. Never publish such an image.
+
 ## Board values
 
 `rootfs/overlay/usr/local/lib/tsx/board.sh` holds the values and the small

@@ -15,6 +15,16 @@ assembly and the manifest. docs/mainline-payload.md tells the contract.
   payload.py scan-tar TARGZ
       Refuse a tarball (the rootfs) that holds a Rockchip resource (a file
       that starts with RSCE) or a file with the sha256 of the stock resource.
+  payload.py both-slot ROOTFS_TARGZ INITRAMFS_CPIO SOURCE_DIR
+      Say whether the payload is a both-slot build of SOURCE_DIR (a copy of
+      the uc-pxx-linux commit): each boot-control, slot and data file of the
+      rootfs (from the packages) and of the initramfs (from the kernel
+      package) must have the bytes of that commit, the list
+      /usr/share/uc-pxx/boot-control.sha256 must name /usr/sbin/uc-pxx-slot
+      and match the files, and the fstab must name no file system by LABEL=
+      or UUID=. Prints one line per file and both_slot=yes or both_slot=no.
+      The exit status is 0 either way (build.sh --require-both-slot stops on
+      no).
   payload.py assemble TEMPLATE RESOURCE OUT
       Put RESOURCE into a copy of TEMPLATE as the "second" part, as
       kernel/mkimage.sh --resource RESOURCE makes it from the same inputs.
@@ -367,6 +377,110 @@ def cmd_scan_tar(a):
     print("no Rockchip resource in %d files of %s" % (n, a[0]))
 
 
+# both-slot: the files of the both-slot boot control (MAINLINE-STEP2-DESIGN
+# section 10, MAINLINE-LINUX-INT-2026-11-10 section 7), path in the image ->
+# path in the source commit
+BOTH_SLOT_ROOTFS = (
+    ("usr/sbin/uc-pxx-arm-slot", "rootfs/overlay/usr/sbin/uc-pxx-arm-slot"),
+    ("usr/sbin/uc-pxx-flash-boot", "rootfs/overlay/usr/sbin/uc-pxx-flash-boot"),
+    ("etc/uc-pxx-mark-boot.sh", "rootfs/overlay/etc/uc-pxx-mark-boot.sh"),
+    ("etc/init.d/uc-pxx-boot-ok", "rootfs/overlay/etc/init.d/uc-pxx-boot-ok"),
+    ("usr/sbin/uc-pxx-post-update", "rootfs/overlay/usr/sbin/uc-pxx-post-update"),
+    ("usr/sbin/uc-pxx-reboot", "rootfs/overlay/usr/sbin/uc-pxx-reboot"),
+    ("usr/sbin/uc-pxx-slot", "rootfs/overlay/usr/sbin/uc-pxx-slot"),
+    ("usr/local/lib/tsx/board.sh", "rootfs/overlay/usr/local/lib/tsx/board.sh"),
+    ("etc/init.d/uc-pxx-lvm", "rootfs/overlay/etc/init.d/uc-pxx-lvm"),
+    ("usr/local/sbin/uc-pxx-firmware", "rootfs/overlay/usr/local/sbin/uc-pxx-firmware"),
+    ("usr/sbin/uc-pxx-data-migrate", "rootfs/overlay/usr/sbin/uc-pxx-data-migrate"),
+    ("usr/sbin/uc-pxx-data-release", "rootfs/overlay/usr/sbin/uc-pxx-data-release"),
+)
+BOTH_SLOT_INITRAMFS = (
+    ("init", "rootfs/initramfs/overlay/init"),
+    ("etc/init.d/rcS", "rootfs/initramfs/overlay/etc/init.d/rcS"),
+    ("usr/sbin/uc-pxx-findfs", "rootfs/initramfs/overlay/usr/sbin/uc-pxx-findfs"),
+    ("usr/sbin/uc-pxx-install-rootfs", "rootfs/initramfs/overlay/usr/sbin/uc-pxx-install-rootfs"),
+    ("usr/sbin/tsx-data-backup", "rootfs/initramfs/overlay/usr/sbin/tsx-data-backup"),
+    ("usr/sbin/uc-pxx-rescue-help", "rootfs/initramfs/overlay/usr/sbin/uc-pxx-rescue-help"),
+    ("usr/sbin/uc-pxx-slot", "rootfs/overlay/usr/sbin/uc-pxx-slot"),
+    ("usr/sbin/uc-pxx-reboot", "rootfs/overlay/usr/sbin/uc-pxx-reboot"),
+)
+
+
+def cpio_files(data):
+    """The regular files of a newc cpio: name (without ./) -> bytes."""
+    out, off = {}, 0
+    while off + 110 <= len(data) and data[off:off + 6] in (b"070701", b"070702"):
+        mode = int(data[off + 14:off + 22], 16)
+        fsize = int(data[off + 54:off + 62], 16)
+        nsize = int(data[off + 94:off + 102], 16)
+        name = data[off + 110:off + 110 + nsize - 1].decode("utf-8", "replace")
+        if name == "TRAILER!!!":
+            break
+        off = (off + 110 + nsize + 3) & ~3
+        if mode & 0o170000 == 0o100000:
+            out[name[2:] if name.startswith("./") else name] = data[off:off + fsize]
+        off = (off + fsize + 3) & ~3
+    return out
+
+
+def cmd_both_slot(a):
+    want = set(p for p, _ in BOTH_SLOT_ROOTFS) | {"usr/share/uc-pxx/boot-control.sha256", "etc/fstab",
+                                                    "usr/sbin/uc-pxx-bootctl"}
+    rootfs = {}
+    with tarfile.open(a[0], "r:gz") as tf:
+        for m in tf:
+            n = m.name[2:] if m.name.startswith("./") else m.name
+            if m.isreg() and n in want:
+                rootfs[n] = tf.extractfile(m).read()
+    initramfs = cpio_files(read(a[1]))
+    bad = []
+
+    def compare(where, files, table):
+        for img, src in table:
+            ref = sha256(read(os.path.join(a[2], src)))
+            if img not in files:
+                print("%s /%s missing (the commit has %s)" % (where, img, ref))
+                bad.append("%s /%s missing" % (where, img))
+                continue
+            got = sha256(files[img])
+            if got == ref:
+                print("%s /%s %s ok" % (where, img, got))
+            else:
+                print("%s /%s %s DIFFERS (the commit has %s)" % (where, img, got, ref))
+                bad.append("%s /%s differs" % (where, img))
+    compare("rootfs", rootfs, BOTH_SLOT_ROOTFS)
+    compare("initramfs", initramfs, BOTH_SLOT_INITRAMFS)
+    if "usr/sbin/uc-pxx-bootctl" in rootfs:
+        print("rootfs /usr/sbin/uc-pxx-bootctl %s (the binary of uc-pxx-boot-tools)" % sha256(rootfs["usr/sbin/uc-pxx-bootctl"]))
+    else:
+        bad.append("rootfs /usr/sbin/uc-pxx-bootctl missing")
+    lst = rootfs.get("usr/share/uc-pxx/boot-control.sha256")
+    if lst is None:
+        bad.append("no /usr/share/uc-pxx/boot-control.sha256")
+    else:
+        names = []
+        for line in lst.decode("ascii", "replace").splitlines():
+            f = line.split()
+            if len(f) != 2 or not re.fullmatch("[0-9a-f]{64}", f[0]) or not f[1].startswith("/"):
+                bad.append("boot-control.sha256: a bad line %r" % line)
+                continue
+            names.append(f[1])
+            got = rootfs.get(f[1][1:])
+            if got is not None and sha256(got) != f[0]:
+                bad.append("boot-control.sha256: %s is not the listed %s" % (f[1], f[0]))
+        print("boot-control.sha256: %d files: %s" % (len(names), " ".join(names)))
+        if "/usr/sbin/uc-pxx-slot" not in names:
+            bad.append("boot-control.sha256 does not name /usr/sbin/uc-pxx-slot")
+    fstab = rootfs.get("etc/fstab", b"").decode("utf-8", "replace")
+    for line in fstab.splitlines():
+        f = line.split()
+        if f and not f[0].startswith("#") and (f[0].startswith("LABEL=") or f[0].startswith("UUID=")):
+            bad.append("the fstab names a file system by %s (%s)" % (f[0], f[1] if len(f) > 1 else "?"))
+    for b in bad:
+        print("not both-slot: %s" % b)
+    print("both_slot=%s" % ("no" if bad else "yes"))
+
+
 def cmd_assemble(a):
     tpl, res = read(a[0]), read(a[1])
     check_layout(tpl, "the boot template")
@@ -469,7 +583,7 @@ def cmd_manifest(a):
 
 def main(argv):
     cmds = {"check-template": (2, cmd_check_template), "split": (2, cmd_split), "initramfs": (2, cmd_initramfs),
-            "scan-tar": (1, cmd_scan_tar),
+            "scan-tar": (1, cmd_scan_tar), "both-slot": (3, cmd_both_slot),
             "assemble": (3, cmd_assemble), "manifest": (None, cmd_manifest)}
     if not argv or argv[0] not in cmds:
         sys.stderr.write(__doc__.split("Every refusal")[0])

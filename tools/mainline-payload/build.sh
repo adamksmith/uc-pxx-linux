@@ -11,6 +11,7 @@
 #                                         [--inputs FILE] [--authorized-keys FILE]
 #                                         [--headroom MIB] [--apk-url URL] [--keep-work]
 #                                         [--step2-bootctl-inst FILE]
+#                                         [--dev-apk-key NAME.rsa.pub] [--require-both-slot]
 #
 # prime   Makes the input snapshot DIR (network): DIR/tsx is the published apk
 #         tree of tsx-aports (rootfs/fetch-apk-tree.sh, --channel, default the
@@ -77,10 +78,20 @@
 #             gate refuses such a payload: it is for no unit before its RULES
 #             line. Without it the rootfs build stops on any file of that name.
 #             The inputs record the sha256 (or none).
+# --dev-apk-key  TEST ONLY: the public key of a private build of uc-pxx
+#             packages in the snapshot's tsx/ tree that are not published yet
+#             (for example the both-slot packages before their tag). The
+#             rootfs build trusts it for the package install only; the image
+#             never trusts it and has /etc/tsx/dev-apk-key. The inputs record
+#             the sha256 (or none); build-info.txt says "DEV PACKAGES". Never
+#             publish such a payload.
+# --require-both-slot  stop (exit 1) unless the payload is a both-slot build
+#             of this commit (payload.py both-slot; the verdict is in
+#             both-slot.txt and build-info.txt either way).
 #
 # The inputs file: one KEY=VALUE per line, "#" lines are comments, each key
 # once, no other key:
-#   FORMAT              uc-pxx-mainline-payload-inputs-3
+#   FORMAT              uc-pxx-mainline-payload-inputs-4
 #   VERSION             the version of the manifest: a release tag or dev-<commit>
 #   SOURCE_DATE_EPOCH   seconds
 #   UC_PXX_LINUX_COMMIT HEAD of this checkout (a clean tree)
@@ -98,6 +109,7 @@
 #   TSX_APK_URL         the apk repository that the panel lists
 #   AUTHORIZED_KEYS_SHA256  none, or the sha256 of --authorized-keys
 #   STEP2_BOOTCTL_INST_SHA256  none, or the sha256 of --step2-bootctl-inst
+#   DEV_APK_KEY_SHA256  none, or the sha256 of --dev-apk-key
 #   CROSS_CC_VERSION, CROSS_LD_VERSION, DTC_VERSION, MKBOOTIMG_SHA256
 #                       the host tools of kernel/mkimage.sh
 #
@@ -120,21 +132,21 @@ MKIMAGE_SHA=98ef579ce1f152463c8902c53c2f2f8edfbdfd6b8a0d40d650c59844d893703f
 ALPINE_REF_DEFAULT=alpine@sha256:e311ae748be7f56ae5cba304bc488f0786df68ee507513f654a5cc8597cffb42
 ALPINE=v3.24
 UPSTREAM=${UPSTREAM_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
-FMT=uc-pxx-mainline-payload-inputs-3
+FMT=uc-pxx-mainline-payload-inputs-4
 # uc-pxx-bootctl-inst r2 (RULES.md: the installer RAM image only; Q-S8: a step-2 rootfs)
 STEP2_INST_SHA=20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203
 KEYS="FORMAT VERSION SOURCE_DATE_EPOCH UC_PXX_LINUX_COMMIT KERNEL_REV MKIMAGE_SHA256 SHIM_SHA256
 RESOURCE_SHA256 VBMETA_SHA256 ALPINE_IMAGE ALPINE_IMAGE_ID ALPINE_SNAPSHOT TSX_SNAPSHOT PIP_SNAPSHOT PROFILE
-ROOTFS_UUID IMG_HEADROOM_MB TSX_APK_URL AUTHORIZED_KEYS_SHA256 STEP2_BOOTCTL_INST_SHA256 CROSS_CC_VERSION CROSS_LD_VERSION
+ROOTFS_UUID IMG_HEADROOM_MB TSX_APK_URL AUTHORIZED_KEYS_SHA256 STEP2_BOOTCTL_INST_SHA256 DEV_APK_KEY_SHA256 CROSS_CC_VERSION CROSS_LD_VERSION
 DTC_VERSION MKBOOTIMG_SHA256"
 die() { echo "mainline-payload: $*" >&2; exit 1; }
-usage() { sed -n '9,13p' "$0" >&2; exit 2; }
+usage() { sed -n '9,14p' "$0" >&2; exit 2; }
 T0=$(date +%s)
 step() { echo "== $* ($(( $(date +%s) - T0 )) s)"; }
 sha() { sha256sum < "$1" | cut -c1-64; }
 
 CMD=${1:-}; [ $# -gt 0 ] && shift
-SNAP= RES= VBM= OUT= INPUTS= KEYSFILE= S2FILE= HEADROOM0= KEEP=0 CHANNEL=https://tsx-aports.unexceptional.net APKURL0=https://tsx-aports.unexceptional.net
+SNAP= RES= VBM= OUT= INPUTS= KEYSFILE= S2FILE= DKFILE= REQBS=0 HEADROOM0= KEEP=0 CHANNEL=https://tsx-aports.unexceptional.net APKURL0=https://tsx-aports.unexceptional.net
 while [ $# -gt 0 ]; do
 	case $1 in
 	--snapshot) SNAP=${2:?}; shift;;
@@ -145,6 +157,8 @@ while [ $# -gt 0 ]; do
 	--inputs) INPUTS=${2:?}; shift;;
 	--authorized-keys) KEYSFILE=${2:?}; shift;;
 	--step2-bootctl-inst) S2FILE=${2:?}; shift;;
+	--dev-apk-key) DKFILE=${2:?}; shift;;
+	--require-both-slot) REQBS=1;;
 	--channel) CHANNEL=${2:?}; shift;;
 	--apk-url) APKURL0=${2:?}; shift;;
 	--keep-work) KEEP=1;;
@@ -196,11 +210,12 @@ rootfs_build() {
 	env -u TSX_COMMON -u UC_PXX_DEV_OVERLAY -u UC_PXX_DEV_COMMON -u TSX_DEV_ROOT_HASH -u AUTHORIZED_KEYS \
 		-u KVER -u IMG_MB -u UC_PXX_SPLASH_SIZES -u TSX_DEV_RESCUE_KEYS -u TSX_DEV_RESCUE_HASH \
 		-u UC_PXX_APK_MIRROR -u UC_PXX_MIRROR_URL -u UC_PXX_DEV_OVERLAY -u RTL8363_INIT -u UC_PXX_BOOTCTL -u UC_PXX_REBOOT \
-		-u UC_PXX_STEP2_BOOTCTL_INST \
+		-u UC_PXX_STEP2_BOOTCTL_INST -u UC_PXX_DEV_APK_KEY \
 		ALPINE=$ALPINE IMAGE="$IMAGE" PROFILE="$PROFILE" TSX_APK_LOCAL="$SNAP/tsx" \
 		TSX_APK_URL="$APKURL" TSX_BUILD_ID="$VERSION" SOURCE_DATE_EPOCH="$SDE" ROOTFS_UUID="$UUID" \
 		IMG_HEADROOM_MB="$HEADROOM" UC_PXX_PIP_CACHE="$pip" UC_PXX_DOCKER_NET="$net" \
-		AUTHORIZED_KEYS="$AKEYS" ${S2INST:+UC_PXX_STEP2_BOOTCTL_INST="$S2INST"} "$@" "$src/rootfs/build-rootfs.sh" all
+		AUTHORIZED_KEYS="$AKEYS" ${S2INST:+UC_PXX_STEP2_BOOTCTL_INST="$S2INST"} \
+		${DEVKEY:+UC_PXX_DEV_APK_KEY="$DEVKEY"} "$@" "$src/rootfs/build-rootfs.sh" all
 }
 
 # ---- the inputs ----------------------------------------------------------------
@@ -274,6 +289,18 @@ if [ -n "$S2FILE" ]; then
 	echo "WARNING: a STEP-2 build (--step2-bootctl-inst): uc-pxx-bootctl-inst r2 in the rootfs; for no unit before its RULES line"
 else
 	pin STEP2_BOOTCTL_INST_SHA256 none
+fi
+DEVKEY=
+if [ -n "$DKFILE" ]; then
+	[ -f "$DKFILE" ] || die "--dev-apk-key $DKFILE: no such file"
+	case ${DKFILE##*/} in *[!A-Za-z0-9._-]*|.*) die "--dev-apk-key: a bad file name";; *.rsa.pub) ;; *) die "--dev-apk-key: the name must end in .rsa.pub";; esac
+	grep -q 'PRIVATE KEY' "$DKFILE" && die "--dev-apk-key $DKFILE holds a private key"
+	grep -q -- '-----BEGIN PUBLIC KEY-----' "$DKFILE" || die "--dev-apk-key $DKFILE is not a public key"
+	DEVKEY=$(readlink -f "$DKFILE")
+	pin DEV_APK_KEY_SHA256 "$(sha "$DEVKEY")"
+	echo "WARNING: DEV PACKAGES (--dev-apk-key ${DKFILE##*/}): uc-pxx packages of a private build; never publish this payload"
+else
+	pin DEV_APK_KEY_SHA256 none
 fi
 
 if [ "$CMD" = prime ]; then
@@ -369,6 +396,11 @@ KREL=$(sed -n 's/^release=//p' "$W/template.info")
 $PY "$T/payload.py" initramfs "$TPL" "$W/initramfs.cpio" > "$W/initramfs.info" || die "no initramfs in the template"
 cat "$W/initramfs.info"
 grep -q '^program_rtl8363_init=missing' "$W/initramfs.info" && echo "WARNING: the initramfs has no rtl8363-init (the rescue cannot set up the switch)"
+$PY "$T/payload.py" both-slot "$RO/rootfs.tar.gz" "$W/initramfs.cpio" "$W/src" > "$W/both-slot.txt" ||
+	die "the both-slot check failed"
+cat "$W/both-slot.txt"
+BOTH=$(sed -n 's/^both_slot=//p' "$W/both-slot.txt")
+[ "$REQBS" = 0 ] || [ "$BOTH" = yes ] || die "--require-both-slot: the payload is not a both-slot build of $COMMIT (both-slot.txt)"
 $PY "$T/payload.py" split "$TPL" "$W/Image"
 : > "$W/empty.res"
 bash "$HERE/kernel/mkimage.sh" --resource "$W/empty.res" --board "$TOKEN" "$W/Image" "$DTB" "$W/remade.img" > "$W/mkimage-template.log"
@@ -400,7 +432,7 @@ rm -f "$V/assembled.img" "$V/vbmeta-patched.img"
 DIR=uc-pxx-mainline
 [ "$rc" = 0 ] || DIR=uc-pxx-mainline.OVER-CAP
 mv "$W/p" "$OUT/$DIR"
-cp "$RO/rootfs.manifest" "$RO/rootfs.sizes" "$OUT/"
+cp "$RO/rootfs.manifest" "$RO/rootfs.sizes" "$W/both-slot.txt" "$OUT/"
 
 step "6. the record"
 TS=$(stat -c %s "$OUT/$DIR/boot-template.img") RS=$(stat -c %s "$OUT/$DIR/rootfs.ext4") MS=$(stat -c %s "$OUT/$DIR/manifest.json")
@@ -422,6 +454,11 @@ TOTAL=$((TS + RS + MS))
 	else
 		echo "uc-pxx-bootctl-inst: r2 ${GOT[STEP2_BOOTCTL_INST_SHA256]} at /usr/libexec/uc-pxx-step2 (a STEP-2 build: for no unit before its RULES line; the installer gate refuses it)"
 	fi
+	if [ "$BOTH" = yes ]; then echo "both-slot build: yes (the boot control, slot and data files of $COMMIT; both-slot.txt)"
+	else echo "both-slot build: NO (both-slot.txt): a payload for slot A only"; fi
+	if [ "${GOT[DEV_APK_KEY_SHA256]}" != none ]; then
+		echo "DEV PACKAGES: the uc-pxx packages come from a private build signed by ${DKFILE##*/} (sha256 ${GOT[DEV_APK_KEY_SHA256]}); the image does not trust that key; never publish this payload"
+	fi
 	sed -n 's/^initramfs_\(sha256\|size\)=/initramfs (built into the Image) \1 /p' "$W/initramfs.info"
 	sed -n 's/^program_/initramfs program /p' "$W/initramfs.info"
 	echo "the payload folder: $TOTAL bytes ($((TOTAL / 1048576)) MiB); the P10-INSTALL drive: $DRIVE bytes (1200 MiB, FAT):" \
@@ -430,7 +467,7 @@ TOTAL=$((TS + RS + MS))
 	[ -n "$INPUTS" ] || echo "STATUS: DEV BUILD"
 } > "$OUT/build-info.txt"
 cat "$OUT/build-info.txt"
-(cd "$OUT" && sha256sum "$DIR/manifest.json" "$DIR/boot-template.img" "$DIR/rootfs.ext4" inputs.txt rootfs.manifest > SHA256SUMS)
+(cd "$OUT" && sha256sum "$DIR/manifest.json" "$DIR/boot-template.img" "$DIR/rootfs.ext4" inputs.txt rootfs.manifest both-slot.txt > SHA256SUMS)
 cat "$OUT/SHA256SUMS"
 own_back "$W/pip"
 [ "$KEEP" = 1 ] || rm -rf "$W"
