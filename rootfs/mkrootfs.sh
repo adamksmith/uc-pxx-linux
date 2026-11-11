@@ -487,10 +487,10 @@ fi
 # MAINLINE-LINUX-INT-2026-11-10.md R-F.3, BOTH-SLOT-PACKAGING-2026-11-10.md).
 STEP2_INST_SHA256=20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203
 STEP2_INST_PATH=usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst
-# uc-pxx-step2 of uc-pxx-installer mainline-step2-rest b9b2e98 (ci/build-step2.sh
-# in golang:1.27.2-alpine 0a761904..., two clean clones byte-identical); NOT yet
-# reviewed for the safety rules: a new build needs a new pin here
-STEP2_BIN_SHA256=b7710fa3f652f17f130201bd3c9cee713dbcd4ec6fd090edce6a4034a23ad92e
+# uc-pxx-step2 of uc-pxx-installer mainline-rc 9627b27 (ci/build-step2.sh,
+# built twice byte-identical; it replaces b7710fa3... of mainline-step2-rest
+# b9b2e98); NOT yet reviewed for the safety rules: a new build needs a new pin here
+STEP2_BIN_SHA256=a4e753cc57f3792df7103bfe3adf7559d0623a716218629a8773abbf8c99863e
 STEP2_BIN_PATH=usr/libexec/uc-pxx-step2/uc-pxx-step2
 STEP2_DATA_SHA256=9162c65df08ac5577e38a2fe124d8cb1434b9b2bcfe787d6fba76055b8006791
 STEP2_DATA_PATH=usr/sbin/uc-pxx-data-migrate

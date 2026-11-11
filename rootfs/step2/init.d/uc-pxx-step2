@@ -16,11 +16,15 @@
 # file once per boot. A stop does NOT end it: a running step 2 may be in the
 # middle of a write, and a write is never cut short by a signal; the program
 # ends by itself or by the restart it makes.
+#
+# After tsx-autoupdate (STEP2-STOP-HOLD-2026-11-11.md §4 item 5, a second
+# layer): its start (`tsx-autoupdate boot`) writes this boot's restart block,
+# also a STOP hold of an earlier boot (`hold stop step2`), before step 2 runs.
 description="Mainline step 2 (uc-pxx-step2 service)"
 prog=/usr/libexec/uc-pxx-step2/uc-pxx-step2
 prog_pidfile=/run/uc-pxx-step2.pid
 prog_log=/var/log/uc-pxx-step2.log
-depend() { need localmount; after uc-pxx-boot-ok uc-pxx-lvm kiosk; }
+depend() { need localmount; after uc-pxx-boot-ok uc-pxx-lvm kiosk tsx-autoupdate; }
 
 start() {
 	ebegin "Starting uc-pxx-step2 service in the background"

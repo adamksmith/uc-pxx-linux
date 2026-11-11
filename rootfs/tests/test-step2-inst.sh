@@ -57,6 +57,7 @@ cmp -s "$T/inst" "$T/R/usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst" && ok "on: 
 grep -q 'For no unit before its RULES line' "$T/R/etc/tsx/step2-bootctl-inst" && ok "on: the image says it is a step-2 build" || bad "on: no marker file"
 [ "$(stat -c %a "$T/R/usr/libexec/uc-pxx-step2/uc-pxx-step2" 2>/dev/null)" = 700 ] && cmp -s "$T/bin" "$T/R/usr/libexec/uc-pxx-step2/uc-pxx-step2" && ok "on: uc-pxx-step2, 0700, the same bytes" || bad "on: uc-pxx-step2"
 cmp -s "$HERE/step2/init.d/uc-pxx-step2" "$T/R/etc/init.d/uc-pxx-step2" && [ "$(stat -c %a "$T/R/etc/init.d/uc-pxx-step2")" = 755 ] && ok "on: the service script" || bad "on: the service script"
+grep -Eq '^depend\(\) \{ need localmount; after ([a-z0-9-]+ )*tsx-autoupdate( [a-z0-9-]+)*; \}$' "$T/R/etc/init.d/uc-pxx-step2" && ok "on: the service starts after tsx-autoupdate (STOP hold, second layer)" || bad "on: the service is not ordered after tsx-autoupdate"
 [ "$(readlink "$T/R/etc/runlevels/default/uc-pxx-step2")" = /etc/init.d/uc-pxx-step2 ] && ok "on: the service in the default runlevel" || bad "on: not in the default runlevel"
 grep -qx 'UC_PXX_STEP2_PAYLOAD=' "$T/R/etc/conf.d/uc-pxx-step2" && ok "on: the conf file names no payload (the service asks nothing)" || bad "on: the conf file"
 [ -s "$T/R/etc/uc-pxx-step2/supervised" ] && ok "on: the supervised marker" || bad "on: no supervised marker"
