@@ -21,18 +21,18 @@ mkdir -p "$T/run" "$T/etc" "$T/bin"
 # the scripts with their fixed paths moved into $T
 for s in HOOK ARM; do
 	eval "src=\$$s"
-	sed -e "s#/run/#$T/run/#g" -e "s#/etc/#$T/etc/#g" -e "s#/proc/cmdline#$T/cmdline#g" \
+	sed -e "s#> /dev/kmsg#>> /dev/kmsg#" -e "s#/run/#$T/run/#g" -e "s#/etc/#$T/etc/#g" -e "s#/proc/cmdline#$T/cmdline#g" \
 	    -e "s#/proc/uptime#$T/uptime#g" -e "s#/proc/sys/kernel/tainted#$T/tainted#g" \
 	    -e "s#/dev/kmsg#$T/kmsg#g" -e "s#/sys/class/#$T/sys/#g" -e "s#/usr/sbin/uc-pxx-bootctl#$T/bin/uc-pxx-bootctl#g" \
 	    -e "s#/usr/sbin/uc-pxx-slot#$T/bin/uc-pxx-slot#g" -e "s#/proc/self/mountinfo#$T/mountinfo#g" \
 	    -e "s#/proc/device-tree/chosen/u-boot,bootargs#$T/ubootargs#g" \
-	    -e 's/^NET_WAIT_SECS=300/NET_WAIT_SECS=0/' "$src" > "$T/$s.sh"
+	    -e 's/^RUNLEVEL_WAIT_SECS=600/RUNLEVEL_WAIT_SECS=0/' "$src" > "$T/$s.sh"
 done
 printf '#!/bin/sh\nexec %s "$@" --file %s/sector --boot-file %s/boot.img\n' "$UC_PXX_BOOTCTL_RUN" "$T" "$T" > "$T/bin/uc-pxx-bootctl"
 # the real uc-pxx-slot, reading $T/ubootargs (the stand-in of /proc/device-tree/chosen/u-boot,bootargs).
 # boot.img is the stand-in of the boot partition of the slot that the hook expects.
 sed "s#/proc/device-tree/chosen/u-boot,bootargs#$T/ubootargs#g" "$HERE/overlay/usr/sbin/uc-pxx-slot" > "$T/bin/uc-pxx-slot"
-printf '#!/bin/sh\necho "    inet 192.0.2.10/24"\n' > "$T/bin/ip"
+printf '#!/bin/sh\n[ -e "%s/net-up" ] && echo "    inet 192.0.2.10/24"\nexit 0\n' "$T" > "$T/bin/ip"
 printf '#!/bin/sh\n[ -e "%s/sshd-up" ]\n' "$T" > "$T/bin/pidof"
 chmod 755 "$T"/bin/*
 echo "100.00 100.00" > "$T/uptime"; echo 0 > "$T/tainted"
@@ -72,7 +72,9 @@ reset() {
 	mksector 15,7,0 14,0,1; mkboot tok1; ubootargs _a; root 179:22
 	echo 0 > "$T/tainted"
 	echo "console=ttyS2,115200n8 rdinit=/init uc-pxx.id=tok1" > "$T/cmdline"
-	rm -f "$T/run/"* "$T/etc/uc-pxx-nomark" "$T/etc/uc-pxx-build-id"; : > "$T/sshd-up"
+	rm -rf "$T/run/"*; rm -f "$T/kmsg" "$T/etc/uc-pxx-nomark" "$T/etc/uc-pxx-build-id"; : > "$T/sshd-up"; : > "$T/net-up"
+	# OpenRC: the default runlevel has finished starting (softlevel default, no rc.starting)
+	mkdir -p "$T/run/openrc"; echo default > "$T/run/openrc/softlevel"
 }
 marked() { [ "$(od -An -tu1 -j8 -N3 "$T/sector" | tr -s ' ')" = " 15 0 1" ]; }
 ab() { od -An -tu1 -j8 -N8 "$T/sector" | tr -s ' '; }
@@ -95,10 +97,38 @@ reset; echo "uc-pxx.id=tok1 uc-pxx.nomark" > "$T/cmdline"; hook; rc=$?
 { [ $rc = 0 ] && unchanged; } && ok "uc-pxx.nomark: A left as it is" || bad "uc-pxx.nomark did not hold (rc $rc)"
 reset; touch "$T/etc/uc-pxx-nomark"; hook; rc=$?
 { [ $rc = 0 ] && unchanged; } && ok "/etc/uc-pxx-nomark: A left as it is" || bad "/etc/uc-pxx-nomark did not hold (rc $rc)"
+echo "== the health rule (owner Q-T7): uptime, the default runlevel, no oops; network and sshd only logged =="
 reset; rm -f "$T/sshd-up"; hook; rc=$?
-{ [ $rc = 1 ] && unchanged; } && ok "no sshd: no mark" || bad "marked without sshd (rc $rc)"
+{ [ $rc = 0 ] && marked; } && ok "no sshd: marks (log only)" || bad "no mark without sshd (rc $rc)"
+reset; rm -f "$T/net-up"; hook; rc=$?
+{ [ $rc = 0 ] && marked; } && ok "no network (no IPv4 on eth0 or usb0): marks (log only)" || bad "no mark without network (rc $rc)"
+reset; rm -f "$T/net-up" "$T/sshd-up"; hook; rc=$?
+{ [ $rc = 0 ] && marked && grep -q "IPv4 on none, sshd no" "$T/kmsg"; } && ok "no network and no sshd: marks, and the log says so" || bad "no network, no sshd (rc $rc, $(tail -1 "$T/kmsg"))"
+reset; mkdir -p "$T/run/openrc/failed"; : > "$T/run/openrc/failed/some-app"; hook; rc=$?
+{ [ $rc = 0 ] && marked; } && ok "a failed unrelated service (the runlevel finished): marks" || bad "a failed service blocked the mark (rc $rc)"
+reset; : > "$T/run/openrc/rc.starting"; hook; rc=$?
+{ [ $rc = 1 ] && unchanged; } && ok "the default runlevel still starting (rc.starting): no mark" || bad "marked while the runlevel starts (rc $rc)"
+reset; echo boot > "$T/run/openrc/softlevel"; hook; rc=$?
+{ [ $rc = 1 ] && unchanged; } && ok "softlevel boot (not default): no mark" || bad "marked in the boot runlevel (rc $rc)"
+reset; rm -f "$T/run/openrc/softlevel"; hook; rc=$?
+{ [ $rc = 1 ] && unchanged; } && ok "no softlevel file: no mark" || bad "marked without a softlevel (rc $rc)"
+reset; : > "$T/run/openrc/rc.stopping"; hook; rc=$?
+{ [ $rc = 1 ] && unchanged; } && ok "OpenRC stopping (rc.stopping): no mark" || bad "marked while stopping (rc $rc)"
+reset; echo reboot > "$T/run/openrc/softlevel"; hook; rc=$?
+{ [ $rc = 1 ] && unchanged; } && ok "softlevel reboot: no mark" || bad "marked during a reboot (rc $rc)"
+reset; echo "30.00 30.00" > "$T/uptime"; ( sleep 3; echo "100.00 100.00" > "$T/uptime" ) & hook; rc=$?; wait
+echo "100.00 100.00" > "$T/uptime"
+{ [ $rc = 0 ] && marked; } && ok "uptime below HEALTH_SECS: waits, then marks" || bad "uptime wait (rc $rc)"
+grep -v '^#' "$HOOK" | grep -qi -e kiosk -e NET_WAIT && bad "the hook code checks the kiosk or waits for the network" || ok "the hook code has no kiosk check and no network wait"
+grep -v '^#' "$HOOK" | grep -E 'sshd|inet' | grep -q -e exit -e until -e while && bad "the hook code exits or waits on the network or sshd" || ok "network and sshd only set the log line"
 reset; echo 128 > "$T/tainted"; hook; rc=$?
 { [ $rc = 1 ] && unchanged; } && ok "kernel oops (taint bit 7): no mark" || bad "marked after an oops (rc $rc)"
+reset; echo 129 > "$T/tainted"; rm -f "$T/net-up" "$T/sshd-up"; hook; rc=$?
+{ [ $rc = 1 ] && unchanged; } && ok "kernel oops (taint 129), no network: no mark" || bad "marked after an oops (rc $rc)"
+reset; echo 1 > "$T/tainted"; hook; rc=$?
+{ [ $rc = 0 ] && marked; } && ok "taint without bit 7 (a proprietary-module bit): marks" || bad "taint 1 blocked the mark (rc $rc)"
+reset; rm -f "$T/ubootargs" "$T/net-up"; hook; rc=$?
+{ [ $rc = 1 ] && unchanged; } && ok "a RAM boot (no u-boot,bootargs), no network: no mark" || bad "a RAM boot marked (rc $rc)"
 reset; ( flock -n 9 && sleep 5 ) 9> "$T/run/uc-pxx-abdata.lock" & sleep 1
 hook; rc=$?; wait
 { [ $rc = 1 ] && unchanged; } && ok "lock held by another program: no mark" || bad "marked while the lock was held (rc $rc)"

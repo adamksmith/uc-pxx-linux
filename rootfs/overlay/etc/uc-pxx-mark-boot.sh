@@ -13,8 +13,13 @@
 # The token comes ONLY from /proc/cmdline, never from a file of the root file system (the root file system
 # is not part of the running image).
 
+# Health (owner Q-T7, 2026-11-11): generic only, so the unit may run any software. The boot is healthy
+# when it has been up HEALTH_SECS, the OpenRC default runlevel has finished starting (whatever each
+# service gave: a failed service does not block), and the kernel has had no oops. The network and sshd
+# are logged, never waited for and never a reason not to mark; no kiosk check. A broken-network build is
+# then marked good and loses its automatic fallback (accepted by the owner: recovery is over the cable).
 HEALTH_SECS=60
-NET_WAIT_SECS=300
+RUNLEVEL_WAIT_SECS=600
 
 log() { echo "uc-pxx-mark-boot: $*" > /dev/kmsg; }
 
@@ -40,21 +45,23 @@ fi
 
 while [ "$(cut -d. -f1 /proc/uptime)" -lt "$HEALTH_SECS" ]; do sleep 5; done
 
-# healthy = reachable: LAN (eth0 has an IPv4 address) or USB link (usb0 configured), and sshd running
-net_ok() {
-	ip -f inet addr show dev eth0 2>/dev/null | grep -q "inet " && return 0
-	ip -f inet addr show dev usb0 2>/dev/null | grep -q "inet " && \
-		[ "$(cat /sys/class/udc/*/state 2>/dev/null | head -1)" = configured ] && return 0
-	return 1
+# The default runlevel has finished starting: OpenRC writes "default" to /run/openrc/softlevel and makes
+# /run/openrc/rc.starting when it starts the runlevel, and removes rc.starting when the last service of it
+# has been started (or has failed). This hook is started by uc-pxx-boot-ok, a service of that runlevel,
+# so rc.starting is there before the hook runs: the test cannot pass early. A shutdown (rc.stopping, or
+# another softlevel) never counts. A service that never returns keeps the runlevel starting: after
+# RUNLEVEL_WAIT_SECS no mark (the slot stays trying).
+runlevel_done() {
+	[ "$(cat /run/openrc/softlevel 2>/dev/null)" = default ] && [ ! -e /run/openrc/rc.starting ] && [ ! -e /run/openrc/rc.stopping ]
 }
 waited=0
-until net_ok && pidof sshd >/dev/null; do
-	if [ "$waited" -ge "$NET_WAIT_SECS" ]; then
-		log "no network/ssh after ${NET_WAIT_SECS}s, NOT marking (slot stays trying)"
+until runlevel_done; do
+	if [ "$waited" -ge "$RUNLEVEL_WAIT_SECS" ]; then
+		log "the OpenRC default runlevel has not finished starting after ${RUNLEVEL_WAIT_SECS}s, NOT marking (slot stays trying)"
 		exit 1
 	fi
-	sleep 10
-	waited=$((waited + 10))
+	sleep 5
+	waited=$((waited + 5))
 done
 
 # kernel taint bit 7 (D) = an oops/BUG happened; do not bless a kernel that has died once
@@ -62,6 +69,13 @@ if [ $(( $(cat /proc/sys/kernel/tainted) & 128 )) -ne 0 ]; then
 	log "kernel oops seen (taint $(cat /proc/sys/kernel/tainted)), NOT marking"
 	exit 1
 fi
+
+# log only (owner Q-T7): the network and sshd are not part of the health rule
+net=
+ip -f inet addr show dev eth0 2>/dev/null | grep -q "inet " && net=eth0
+ip -f inet addr show dev usb0 2>/dev/null | grep -q "inet " && net="${net:+$net,}usb0"
+pidof sshd >/dev/null 2>&1 && ssh=yes || ssh=no
+log "healthy: up $(cut -d. -f1 /proc/uptime) s, default runlevel started, no oops (log only: IPv4 on ${net:-none}, sshd $ssh)"
 
 # F1: never race the flash wrapper or uc-pxx-arm-slot. They hold this lock while they arm slot A, and they
 # leave /run/uc-pxx-slot-a-changed behind: once boot_a or system_a has been changed under this running

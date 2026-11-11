@@ -69,9 +69,20 @@ in this order and stops at the first one that fails:
    of the `boot_a` header and to `/chosen/bootargs` of the embedded device
    tree. `uc-pxx-bootctl` compares the token with the header.
 3. Wait until the uptime is 60 seconds.
-4. Wait up to 300 seconds for an IPv4 address on `eth0` (or a configured USB
-   link on `usb0`) and a running `sshd`.
+4. Wait until the OpenRC default runlevel has finished starting: the file
+   `/run/openrc/softlevel` holds `default`, and neither `/run/openrc/rc.starting`
+   nor `/run/openrc/rc.stopping` exists. OpenRC removes `rc.starting` when the
+   last service of the runlevel has started or failed, so a failed service
+   does not stop the mark. The service `uc-pxx-boot-ok` is in that runlevel,
+   so `rc.starting` exists when the hook starts. Stop after 600 seconds when
+   the runlevel has not finished (a service that never returns).
 5. Stop when the kernel has an oops (taint bit 7).
+   The health rule is only steps 3 to 5 (owner decision Q-T7, 2026-11-11):
+   the unit may run any software, so the hook does not check the kiosk, the
+   network or `sshd`. It writes the IPv4 state of `eth0` and `usb0` and
+   whether `sshd` runs to the kernel log, and does not wait for them. A build
+   with a broken network is marked good and has no automatic fallback; the
+   recovery is over the USB cable.
 6. Take the lock `/run/uc-pxx-abdata.lock` without waiting. Stop when the
    flash wrapper or `uc-pxx-arm-slot` holds it, or when
    `/run/uc-pxx-slot-<slot>-changed` exists for the booted slot.
@@ -85,8 +96,8 @@ U-Boot starts the other slot.
 
 ### The service uc-pxx-boot-ok
 
-The OpenRC service `uc-pxx-boot-ok` (default runlevel, after `sshd` and
-`networking`) starts the hook in the background and returns at once. The
+The OpenRC service `uc-pxx-boot-ok` (default runlevel, ordered after `sshd`
+and `networking` when they exist; the order is not a health condition) starts the hook in the background and returns at once. The
 hook ends by itself, so the service does not register it with
 start-stop-daemon. The service stays "started" after the hook ends.
 `rc-status` does not show "crashed". The service state does not show the
@@ -101,7 +112,8 @@ result of the hook. Read the `uc-pxx-mark-boot:` lines of the kernel log
   the same pid. A `uc-pxx-bootctl` child that already runs finishes its
   write.
 - A `stop`, a `restart` or a runlevel change while the hook still waits (the
-  first 60 to 360 seconds of a boot) ends the marking for that boot. Slot A
+  first 60 seconds of a boot, and until the default runlevel has finished
+  starting, at most 600 seconds) ends the marking for that boot. Slot A
   stays "trying". The next boot marks it, or U-Boot starts slot B. To start
   the hook again by hand, remove `/run/uc-pxx-boot-ok.pid` first.
 - At shutdown, OpenRC sends SIGTERM and then SIGKILL to every process, and

@@ -79,6 +79,34 @@ sleep 0.5
 { [ "$s1" = stopped ] && [ "$s2" = started ] && [ "$(runs)" = 1 ]; } && ok "stop, start: stopped, started, no second run" || bad "stop, start: $s1, $s2, runs $(runs)"
 rc-update -q del uc-pxx-boot-ok default
 
+echo "== the health rule's runlevel test (owner Q-T7) under the real openrc default =="
+# The real runlevel_done() of the hook, in a stub hook that the service starts during openrc default:
+# at its start the runlevel must still be starting; it must turn done only after openrc default has
+# returned, also with a failed service and a slow service in the runlevel.
+HOOKSRC=/src/rootfs/overlay/etc/uc-pxx-mark-boot.sh
+cp /etc/uc-pxx-mark-boot.sh /tmp/stub.away
+{ echo '#!/bin/sh'; sed -n '/^runlevel_done() {$/,/^}$/p' "$HOOKSRC"
+  echo 'runlevel_done && echo "at-start done" >> /tmp/rl.log || echo "at-start starting" >> /tmp/rl.log'
+  echo 'i=0; until runlevel_done; do sleep 0.1; i=$((i + 1)); [ $i -lt 1200 ] || { echo timeout >> /tmp/rl.log; exit 1; }; done'
+  echo 'echo "done $(cut -d" " -f1 /proc/uptime)" >> /tmp/rl.log'; } > /etc/uc-pxx-mark-boot.sh
+chmod 755 /etc/uc-pxx-mark-boot.sh
+grep -q '^runlevel_done() {$' /etc/uc-pxx-mark-boot.sh && ok "the hook's runlevel_done() was taken from $HOOKSRC" || bad "no runlevel_done() in the hook"
+printf '#!/sbin/openrc-run\ndepend() { after uc-pxx-boot-ok; }\nstart() { ebegin app-fails; false; eend 1; }\n' > /etc/init.d/app-fails
+printf '#!/sbin/openrc-run\ndepend() { after uc-pxx-boot-ok; }\nstart() { ebegin app-slow; sleep 3; eend 0; }\n' > /etc/init.d/app-slow
+chmod 755 /etc/init.d/app-fails /etc/init.d/app-slow
+rc-update -q add uc-pxx-boot-ok default; rc-update -q add app-fails default; rc-update -q add app-slow default
+openrc -q sysinit >/dev/null 2>&1; rm -f /tmp/rl.log
+newboot 0 0
+timeout 120 openrc -q default >/dev/null 2>&1; t1=$(now)
+wait_for 600 grep -qs -e '^done' -e timeout /tmp/rl.log
+td=$(sed -n 's/^done //p' /tmp/rl.log)
+grep -qx "at-start starting" /tmp/rl.log && ok "when the service starts the hook, the runlevel is still starting" || bad "at the hook's start: $(head -1 /tmp/rl.log)"
+{ [ -n "$td" ] && awk -v a="$t1" -v b="$td" 'BEGIN { exit !(b >= a - 0.2) }'; } && ok "done only after openrc default returned ($t1 -> $td), with a failed and a slow service" || bad "done at '$td', openrc default returned $t1: $(tr '\n' ' ' < /tmp/rl.log)"
+rc-status default 2>/dev/null | grep -E 'app-fails|app-slow' | sed 's/^/    rc-status: /'
+rc-status --crashed 2>/dev/null | sed 's/^/    crashed: /'
+rc-update -q del app-fails default; rc-update -q del app-slow default; rc-update -q del uc-pxx-boot-ok default
+mv /tmp/stub.away /etc/uc-pxx-mark-boot.sh
+
 echo "== the hook ends with 1 =="
 newboot 1 1
 rc-service -C uc-pxx-boot-ok start >/dev/null 2>&1; rc=$?
