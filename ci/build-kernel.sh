@@ -85,8 +85,14 @@ echo "build timestamp: $KBUILD_BUILD_TIMESTAMP"
 
 echo "== configure: defconfig + uc-pxx.config"
 rm -rf "$BUILD"; mkdir -p "$BUILD"
+SRC=$(cd "$SRC" && pwd) BUILD=$(cd "$BUILD" && pwd)
 # A fixed build user and host, as the sister projects use: the kernel version
 # string names no build machine.
+# The debug info names the source and the build folder, and the GNU build-id of
+# vmlinux (a note in the Image) is a hash that covers it: map both folders away,
+# so the Image does not depend on where it was built.
+# (Kbuild reads KCFLAGS and KAFLAGS from the environment.)
+export KCFLAGS="-ffile-prefix-map=$SRC/= -ffile-prefix-map=$BUILD/=" KAFLAGS="-ffile-prefix-map=$SRC/= -ffile-prefix-map=$BUILD/="
 M="make -C $SRC O=$BUILD ARCH=arm64 CROSS_COMPILE=$CROSS KBUILD_BUILD_USER=build KBUILD_BUILD_HOST=uc-pxx-build"
 $M -s defconfig uc-pxx.config
 # The build runs in $BUILD, so the relative name is the copy in $BUILD.
@@ -132,6 +138,7 @@ echo "$REV" > "$OUT/kernel.commit"
 	echo "release=$KREL"
 	echo "commit=$REV"
 	echo "build_timestamp=$KBUILD_BUILD_TIMESTAMP"
+	echo "file_prefix_map=source and build folder mapped away (KCFLAGS/KAFLAGS)"
 	echo "initramfs_sha256=$(sha256sum < "$INITRAMFS" | cut -c1-64)"
 	echo "cc=$("${CROSS}gcc" --version | head -n 1)"
 	echo "ld=$("${CROSS}ld" -v | head -n 1)"
