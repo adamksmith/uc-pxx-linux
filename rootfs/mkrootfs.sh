@@ -521,10 +521,19 @@ else
 fi
 inst=$(cd $R && find . -name 'uc-pxx-bootctl-inst*' | sed 's#^\./##' | sort | tr '\n' ' ')
 s2=$(cd $R && find . -name 'uc-pxx-step2*' | sed 's#^\./##' | sort | tr '\n' ' ')
+# a copy of r2 or uc-pxx-step2 under another name, by its bytes (review r2):
+# only files of their sizes are hashed
+cp2=$(cd $R && find . -type f \( -size ${STEP2_INST_SIZE:-777976}c -o -size ${STEP2_BIN_SIZE:-4849824}c \) -exec sha256sum {} + |
+	awk -v a="$STEP2_INST_SHA256" -v b="$STEP2_BIN_SHA256" -v pa="./$STEP2_INST_PATH" -v pb="./$STEP2_BIN_PATH" \
+		'($1 == a && $2 != pa) || ($1 == b && $2 != pb) { print $2 }' | tr '\n' ' ')
+[ -z "$cp2" ] || { echo "ERROR: copies of uc-pxx-bootctl-inst or uc-pxx-step2 in the image: $cp2"; exit 1; }
 if [ -n "${UC_PXX_STEP2_BOOTCTL_INST:-}" ]; then
 	[ "$inst" = "$STEP2_INST_PATH " ] || { echo "ERROR: uc-pxx-bootctl-inst files in the image: '$inst' (only /$STEP2_INST_PATH is allowed)"; exit 1; }
 	[ "$s2" = "etc/conf.d/uc-pxx-step2 etc/init.d/uc-pxx-step2 etc/runlevels/default/uc-pxx-step2 etc/uc-pxx-step2 usr/libexec/uc-pxx-step2 $STEP2_BIN_PATH " ] ||
 		{ echo "ERROR: uc-pxx-step2 files in the image: '$s2'"; exit 1; }
+	# the two folders hold exactly their files (review r2: the program reads files there)
+	[ "$(cd $R && find etc/uc-pxx-step2 usr/libexec/uc-pxx-step2 | sort | tr '\n' ' ')" = "etc/uc-pxx-step2 etc/uc-pxx-step2/supervised usr/libexec/uc-pxx-step2 $STEP2_INST_PATH $STEP2_BIN_PATH " ] ||
+		{ echo "ERROR: other files in /etc/uc-pxx-step2 or /usr/libexec/uc-pxx-step2"; exit 1; }
 else
 	[ -z "$inst" ] || { echo "ERROR: the image has uc-pxx-bootctl-inst ($inst): RULES.md allows it in no slot (a step-2 build needs UC_PXX_STEP2_BOOTCTL_INST)"; exit 1; }
 	[ ! -e $R/usr/libexec/uc-pxx-step2 ] || { echo "ERROR: the image has /usr/libexec/uc-pxx-step2 without UC_PXX_STEP2_BOOTCTL_INST"; exit 1; }

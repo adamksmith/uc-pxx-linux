@@ -192,6 +192,7 @@ mkdisk "$W/disk-noa.img" misc=- boot_a=- boot_b=- system_x="$R/X.ext4" system_b=
 
 # ---- the device trees and the runs ---------------------------------------------
 QM=(qemu-system-aarch64 -M virt -cpu cortex-a53 -smp 2 -m 1024 -nographic -no-reboot)
+rm -f "$W/.stop"
 "${QM[@]}" -machine dumpdtb="$W/virt.dtb" >/dev/null 2>&1
 [ -s "$W/virt.dtb" ] || { echo "test-slot-boot-qemu: qemu dumpdtb failed" >&2; exit 1; }
 # The blob of dumpdtb has no free space: given back with -dtb as it is, the
@@ -205,6 +206,8 @@ run_case() {
 	cp "$W/virt.dtb" "$dtb"
 	[ "$ub" = - ] || fdtput -t s "$dtb" /chosen u-boot,bootargs "$ub"
 	cp "$W/$disk" "$W/$name.img"
+	# no qemu after the EXIT trap ran (review n6: a case that was still copying)
+	[ ! -e "$W/.stop" ] || return 0
 	# qemu itself in the background (not under timeout: a kill of timeout
 	# leaves qemu running, review m5); its PID in NAME.pid for the EXIT trap
 	"${QM[@]}" -kernel "$TIMG" -dtb "$dtb" \
@@ -213,6 +216,7 @@ run_case() {
 		> "$log" 2>&1 &
 	local q=$! t=0
 	echo $q > "$W/$name.pid"
+	[ ! -e "$W/.stop" ] || { kill -KILL $q 2>/dev/null || true; rm -f "$W/$name.pid"; return 0; }
 	while kill -0 $q 2>/dev/null; do
 		if grep -q 'uc-pxx-initramfs: RESCUE:' "$log" 2>/dev/null; then sleep 2; break; fi
 		[ $t -ge 300 ] && { echo "TIMEOUT after 300 s" >> "$log"; break; }
@@ -226,6 +230,7 @@ run_case() {
 # (only a PID whose command line is a qemu of this work folder: never a reused PID)
 stop_qemus() {
 	local p q
+	: > "$W/.stop"
 	for p in "$W"/*.pid; do
 		[ -f "$p" ] || continue
 		q=$(cat "$p" 2>/dev/null) || q=

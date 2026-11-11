@@ -435,6 +435,9 @@ STEP2_SET = {
     "etc/uc-pxx-step2/supervised": ("any", 0o644),
     "etc/runlevels/default/uc-pxx-step2": ("link:/etc/init.d/uc-pxx-step2", None),
 }
+# the two binaries by sha256 (a copy under another name is found by its bytes)
+STEP2_SHAS = {v: k for k, (v, m) in STEP2_SET.items() if re.fullmatch("[0-9a-f]{64}", v)}
+STEP2_SIZES = (777976, 4849824)
 
 
 def cpio_entries(data):
@@ -471,7 +474,13 @@ def cmd_both_slot(a):
             base = n.rsplit("/", 1)[-1]
             if n == "etc/tsx/dev-overlay":
                 bad.append("rootfs /%s present (a DEV-overlay build)" % n)
-            if n == STEP2_MARKER or n in STEP2_SET or base.startswith("uc-pxx-bootctl-inst") or base.startswith("uc-pxx-step2"):
+            if m.isreg() and m.size in STEP2_SIZES:
+                # a copy of r2 or uc-pxx-step2 under another name (review r2)
+                h = hashlib.sha256(tf.extractfile(m).read()).hexdigest()
+                if h in STEP2_SHAS and STEP2_SHAS[h] != n:
+                    bad.append("rootfs /%s is a copy of /%s" % (n, STEP2_SHAS[h]))
+            if (n == STEP2_MARKER or n in STEP2_SET or base.startswith("uc-pxx-bootctl-inst") or base.startswith("uc-pxx-step2")
+                    or n.startswith("etc/uc-pxx-step2/") or n.startswith("usr/libexec/uc-pxx-step2/")):
                 kind = "dir" if m.isdir() else "link:" + m.linkname if m.issym() else "file" if m.isreg() else "other"
                 data = tf.extractfile(m).read() if m.isreg() else None
                 step2[n] = (kind, m.mode & 0o7777, m.uid, m.gid, data)

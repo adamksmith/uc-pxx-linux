@@ -62,6 +62,18 @@ grep -qx 'UC_PXX_STEP2_PAYLOAD=' "$T/R/etc/conf.d/uc-pxx-step2" && ok "on: the c
 [ -s "$T/R/etc/uc-pxx-step2/supervised" ] && ok "on: the supervised marker" || bad "on: no supervised marker"
 rc=$(step touch "$T/R/usr/sbin/uc-pxx-bootctl-inst"); [ "$rc" != 0 ] && grep -q 'only /usr/libexec' "$T/out" && ok "on, a second copy elsewhere: the build stops" || bad "on with a second copy: rc $rc"
 rc=$(step sh -c "mkdir -p $T/R/usr/local/sbin; touch $T/R/usr/local/sbin/uc-pxx-step2-extra"); [ "$rc" != 0 ] && grep -q 'uc-pxx-step2 files in the image' "$T/out" && ok "on, a stray uc-pxx-step2 file: the build stops" || bad "on with a stray step-2 file: rc $rc"
+export STEP2_INST_SIZE=$(stat -c %s "$T/inst") STEP2_BIN_SIZE=$(stat -c %s "$T/bin")
+rc=$(step sh -c "mkdir -p $T/R/usr/local/bin; cp $T/bin $T/R/usr/local/bin/helper"); [ "$rc" != 0 ] && grep -q 'copies of uc-pxx-bootctl-inst or uc-pxx-step2' "$T/out" && ok "on, a copy of uc-pxx-step2 under another name: the build stops" || bad "on with a renamed copy: rc $rc"
+rc=$(step sh -c "mkdir -p $T/R/usr/local/bin; cp $T/inst $T/R/usr/local/bin/tool"); [ "$rc" != 0 ] && grep -q 'copies of' "$T/out" && ok "on, a copy of r2 under another name: the build stops" || bad "on with a renamed r2: rc $rc"
+cat > "$T/extra.sh" <<'EOX'
+mkdir -p "$1/etc/uc-pxx-step2"; : > "$1/etc/uc-pxx-step2/auto"
+EOX
+sed -i 's|^	# the two folders hold exactly their files|	[ -z "${TEST_EXTRA:-}" ] \|\| sh "$TEST_EXTRA" "$R"\n	# the two folders hold exactly their files|' "$T/step-t.sh"
+TEST_EXTRA=$T/extra.sh; export TEST_EXTRA
+rc=$(step true); [ "$rc" != 0 ] && grep -q 'other files in /etc/uc-pxx-step2' "$T/out" && ok "on, another file in /etc/uc-pxx-step2: the build stops" || bad "on with an extra file: rc $rc ($(cat "$T/out"))"
+unset TEST_EXTRA
+rc=$(step true); [ "$rc" = 0 ] && ok "on again (the size scan finds only the two binaries)" || bad "on again: rc $rc"
+unset STEP2_INST_SIZE STEP2_BIN_SIZE
 printf 'other\n' > "$T/other"; export UC_PXX_STEP2_BIN=$T/other
 rc=$(step true); [ "$rc" != 0 ] && grep -q 'the pinned uc-pxx-step2 is' "$T/out" && ok "on, another uc-pxx-step2: the build stops" || bad "on with another uc-pxx-step2: rc $rc"
 export UC_PXX_STEP2_BIN=$T/bin UC_PXX_STEP2_BOOTCTL_INST=$T/other
