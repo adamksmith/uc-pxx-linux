@@ -66,6 +66,11 @@ apk add --root $R --initdb --no-cache -q \
 	--repositories-file /etc/apk/repositories --keys-dir /etc/apk/keys \
 	alpine-baselayout busybox busybox-binsh dropbear e2fsprogs e2fsprogs-extra evtest
 cp -a "$HERE"/overlay/. $R/
+# The modes of the overlay come from the checkout. A checkout made with umask
+# 002 has group-writable files and folders (also "/" of the initramfs): take
+# the group and other write bits away from every path of the overlay, so the
+# initramfs does not depend on the umask of the checkout.
+(cd "$HERE/overlay" && find . ! -type l) | while IFS= read -r f; do chmod go-w "$R/$f"; done
 chmod 755 $R/init $R/etc/init.d/rcS $R/usr/sbin/uc-pxx-install-rootfs $R/usr/sbin/uc-pxx-rescue-help \
 	$R/usr/sbin/uc-pxx-findfs $R/usr/sbin/tsx-data-backup
 # The shared rescue tools of tsx-linux-common (package tsx-rescue-ui). The
