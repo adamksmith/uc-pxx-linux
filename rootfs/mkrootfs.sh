@@ -487,10 +487,10 @@ fi
 # MAINLINE-LINUX-INT-2026-11-10.md R-F.3, BOTH-SLOT-PACKAGING-2026-11-10.md).
 STEP2_INST_SHA256=20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203
 STEP2_INST_PATH=usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst
-# uc-pxx-step2 of uc-pxx-installer mainline-rc-3 6aab316 (ci/build-step2.sh,
-# built twice byte-identical; it replaces 3c2ba06f... of mainline-rc-2 d105ba2, b8c2a6d9... of c0d8f0b, 1cbb32ae... of mainline-rc be239e3,
+# uc-pxx-step2 of uc-pxx-installer mainline-rc-3 d754663 (ci/build-step2.sh,
+# built twice byte-identical; it replaces 13ea2508... of 6aab316, 3c2ba06f... of mainline-rc-2 d105ba2, b8c2a6d9... of c0d8f0b, 1cbb32ae... of mainline-rc be239e3,
 # f7cc1d33... of 1605579, a4e753cc... of 9627b27 and b7710fa3... of mainline-step2-rest b9b2e98); NOT yet reviewed for the safety rules: a new build needs a new pin here
-STEP2_BIN_SHA256=13ea2508e13f457d6ff2f5e26094fe5571ec8ed5c4c3d8237488eb5b6f44f735
+STEP2_BIN_SHA256=7049463ff10c2826113f74a9a7b333a15b4fbf18ec61db8bfe9ce8834913fecf
 STEP2_BIN_PATH=usr/libexec/uc-pxx-step2/uc-pxx-step2
 STEP2_DATA_SHA256=9162c65df08ac5577e38a2fe124d8cb1434b9b2bcfe787d6fba76055b8006791
 STEP2_DATA_PATH=usr/sbin/uc-pxx-data-migrate
