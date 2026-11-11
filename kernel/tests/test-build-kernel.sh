@@ -43,6 +43,6 @@ grep -q 'KBUILD_BUILD_TIMESTAMP=${KBUILD_BUILD_TIMESTAMP:-$(git' "$S" && ok "the
 grep -q 'WANT_KREL=' "$S" && grep -q 'GOT_KREL" = "$WANT_KREL"' "$S" && ok "the release is checked before the build" || bad "no release check"
 grep -q 'tar --sort=name --mtime=' "$S" && grep -q 'gzip -n' "$S" && ok "the modules tarball is packed in order with fixed times" || bad "modules tarball not reproducible"
 grep -q 'build-info.txt' "$S" && ok "build-info.txt is written" || bad "no build-info.txt"
-grep -q 'export KCFLAGS="-ffile-prefix-map=$SRC/= -ffile-prefix-map=$BUILD/="' "$S" && ok "the debug info does not name the build folders (build-id)" || bad "no file-prefix-map"
+grep -q 'export KCFLAGS="-ffile-prefix-map=$SRC=. -ffile-prefix-map=$BUILD=."' "$S" && ok "the debug info does not name the build folders (build-id)" || bad "no file-prefix-map"
 echo "$N ok, $F failed"
 [ "$F" = 0 ]

@@ -91,8 +91,9 @@ SRC=$(cd "$SRC" && pwd) BUILD=$(cd "$BUILD" && pwd)
 # The debug info names the source and the build folder, and the GNU build-id of
 # vmlinux (a note in the Image) is a hash that covers it: map both folders away,
 # so the Image does not depend on where it was built.
-# (Kbuild reads KCFLAGS and KAFLAGS from the environment.)
-export KCFLAGS="-ffile-prefix-map=$SRC/= -ffile-prefix-map=$BUILD/=" KAFLAGS="-ffile-prefix-map=$SRC/= -ffile-prefix-map=$BUILD/="
+# (Kbuild reads KCFLAGS and KAFLAGS from the environment. No "/" after the
+# folders: the compilation directory of each object is the build folder itself.)
+export KCFLAGS="-ffile-prefix-map=$SRC=. -ffile-prefix-map=$BUILD=." KAFLAGS="-ffile-prefix-map=$SRC=. -ffile-prefix-map=$BUILD=."
 M="make -C $SRC O=$BUILD ARCH=arm64 CROSS_COMPILE=$CROSS KBUILD_BUILD_USER=build KBUILD_BUILD_HOST=uc-pxx-build"
 $M -s defconfig uc-pxx.config
 # The build runs in $BUILD, so the relative name is the copy in $BUILD.
