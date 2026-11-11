@@ -434,7 +434,8 @@ def cpio_entries(data):
         if name == "TRAILER!!!":
             break
         off = (off + 110 + nsize + 3) & ~3
-        out.append((name[2:] if name.startswith("./") else name, mode, data[off:off + fsize]))
+        # "./init", "/init" and "init" are one path for the kernel
+        out.append((re.sub(r"^(\./|/)+", "", name), mode, data[off:off + fsize]))
         off = (off + fsize + 3) & ~3
     return out
 
@@ -452,8 +453,7 @@ def cmd_both_slot(a):
     rootfs, rmode, bad = {}, {}, []
     with tarfile.open(a[0], "r:gz") as tf:
         for m in tf:
-            n = m.name[2:] if m.name.startswith("./") else m.name
-            n = n.rstrip("/")
+            n = re.sub(r"^(\./|/)+", "", m.name).rstrip("/")
             base = n.rsplit("/", 1)[-1]
             if base.startswith("uc-pxx-bootctl-inst") or n in ("usr/libexec/uc-pxx-step2", "etc/tsx/dev-overlay",
                                                                "etc/tsx/step2-bootctl-inst"):
