@@ -184,6 +184,10 @@ mkdisk "$W/disk-label.img" misc=- boot_a=- boot_b=- system_a="$R/A.ext4" system_
 QM=(qemu-system-aarch64 -M virt -cpu cortex-a53 -smp 2 -m 1024 -nographic -no-reboot)
 "${QM[@]}" -machine dumpdtb="$W/virt.dtb" >/dev/null 2>&1
 [ -s "$W/virt.dtb" ] || { echo "test-slot-boot-qemu: qemu dumpdtb failed" >&2; exit 1; }
+# The blob of dumpdtb has no free space: given back with -dtb as it is, the
+# guest prints nothing (measured). fdtput rewrites it with room; the marker
+# property is not read by the initramfs.
+fdtput -t s "$W/virt.dtb" /chosen uc-pxx,slottest base
 UB="console=ttyS2,115200 earlycon=uart8250,mmio32,0xff1a0000 root=PARTUUID=0 init=/init"
 # run_case NAME DISK BOOTARGS: BOOTARGS "-" leaves /chosen/u-boot,bootargs out
 run_case() {
