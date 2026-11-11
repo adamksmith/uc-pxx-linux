@@ -218,12 +218,24 @@ run_case() {
 		[ $t -ge 300 ] && { echo "TIMEOUT after 300 s" >> "$log"; break; }
 		sleep 1; t=$((t + 1))
 	done
-	kill -KILL $q 2>/dev/null
+	kill -KILL $q 2>/dev/null || true
 	wait $q 2>/dev/null || true
 	rm -f "$W/$name.pid"
 }
 # every qemu of this run ends with the script, also on an error or a signal
-stop_qemus() { for p in "$W"/*.pid; do [ -f "$p" ] && kill -KILL "$(cat "$p")" 2>/dev/null; rm -f "$p"; done; return 0; }
+# (only a PID whose command line is a qemu of this work folder: never a reused PID)
+stop_qemus() {
+	local p q
+	for p in "$W"/*.pid; do
+		[ -f "$p" ] || continue
+		q=$(cat "$p" 2>/dev/null) || q=
+		if [ -n "$q" ] && tr '\0' ' ' < "/proc/$q/cmdline" 2>/dev/null | grep -q "qemu-system-aarch64 .*$W/"; then
+			kill -KILL "$q" 2>/dev/null || true
+		fi
+		rm -f "$p"
+	done
+	return 0
+}
 trap stop_qemus EXIT
 trap 'exit 130' INT TERM
 declare -A DISK=( [a]=disk-ab.img [b]=disk-ab.img [ram]=disk-ab.img [b-gone]=disk-nob.img [two]=disk-ab.img [bad]=disk-ab.img [b-label]=disk-label.img
