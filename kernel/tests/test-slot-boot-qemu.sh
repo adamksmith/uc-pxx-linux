@@ -51,6 +51,8 @@ while [ $# -gt 0 ]; do
 	esac
 	shift
 done
+# Without arguments (the loop of the host tests): nothing to boot
+[ -n "$CPIO$KSRC$W$TIMG" ] || { echo "SKIPPED: test-slot-boot-qemu needs --initramfs, --kernel-src and --work (a run by hand on the build host)"; exit 0; }
 [ -f "$CPIO" ] && [ -n "$W" ] || { sed -n '16,18p' "$0" >&2; exit 2; }
 [ -n "$TIMG" ] || [ -d "$KSRC" ] || { echo "test-slot-boot-qemu: --kernel-src or --test-image is required" >&2; exit 2; }
 for t in qemu-system-aarch64 fdtput python3 docker; do command -v $t >/dev/null || { echo "SKIPPED: $t is not installed"; exit 0; }; done
