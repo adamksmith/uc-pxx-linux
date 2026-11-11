@@ -22,7 +22,11 @@ assembly and the manifest. docs/mainline-payload.md tells the contract.
       package) must have the bytes of that commit, the list
       /usr/share/uc-pxx/boot-control.sha256 must name /usr/sbin/uc-pxx-slot
       and match the files, and the fstab must name no file system by LABEL=
-      or UUID=. Prints one line per file and both_slot=yes or both_slot=no.
+      or UUID= (it must be the commit's fstab). Modes are checked, and
+      uc-pxx-bootctl-inst, a step-2 or DEV-overlay marker, or a doubled cpio
+      entry make it "no". Prints one line per file and both_slot=yes or
+      both_slot=no. "yes" means "equal to this commit and the two pinned
+      binaries", not "reviewed": only the installer's gate pins decide.
       The exit status is 0 either way (build.sh --require-both-slot stops on
       no).
   payload.py assemble TEMPLATE RESOURCE OUT
@@ -406,9 +410,22 @@ BOTH_SLOT_INITRAMFS = (
 )
 
 
-def cpio_files(data):
-    """The regular files of a newc cpio: name (without ./) -> bytes."""
-    out, off = {}, 0
+# The two binaries of uc-pxx-boot-tools 0.2.0 that are not in this repository:
+# uc-pxx-bootctl (built from tools/uc-pxx-bootctl/uc-pxx-bootctl.c, the pin of
+# the recipe; NOT yet in the safety rules) and uc-pxx-update-boot (tsx-aports,
+# the RULES pin). The exact list of boot-control.sha256 in that package.
+BOTH_SLOT_BOOTCTL_SHA256 = "11c2afcd0272f9c989f9825074186a2341d0a33a34e0fe9ebf92cf0081f9efa7"
+UPDATE_BOOT_SHA256 = "4de04b78b8a48a4cf4d79f22f18f2f69a6932a36398e4ba6ec0ac175483b3703"
+BOTH_SLOT_LIST = ("/usr/sbin/uc-pxx-bootctl", "/etc/uc-pxx-mark-boot.sh", "/etc/init.d/uc-pxx-boot-ok",
+                  "/usr/sbin/uc-pxx-flash-boot", "/usr/sbin/uc-pxx-arm-slot", "/usr/sbin/uc-pxx-update-boot",
+                  "/usr/sbin/uc-pxx-post-update", "/usr/sbin/uc-pxx-slot")
+# files that are sourced, not run (mode 0644); every other checked file is 0755
+SOURCED = ("usr/local/lib/tsx/board.sh",)
+
+
+def cpio_entries(data):
+    """The entries of a newc cpio: a list of (name without ./, mode, bytes)."""
+    out, off = [], 0
     while off + 110 <= len(data) and data[off:off + 6] in (b"070701", b"070702"):
         mode = int(data[off + 14:off + 22], 16)
         fsize = int(data[off + 54:off + 62], 16)
@@ -417,25 +434,57 @@ def cpio_files(data):
         if name == "TRAILER!!!":
             break
         off = (off + 110 + nsize + 3) & ~3
-        if mode & 0o170000 == 0o100000:
-            out[name[2:] if name.startswith("./") else name] = data[off:off + fsize]
+        out.append((name[2:] if name.startswith("./") else name, mode, data[off:off + fsize]))
         off = (off + fsize + 3) & ~3
     return out
 
 
+def cpio_files(data):
+    """The regular files of a newc cpio: name (without ./) -> bytes (the last entry wins, as in the kernel)."""
+    return {n: b for n, m, b in cpio_entries(data) if m & 0o170000 == 0o100000}
+
+
 def cmd_both_slot(a):
+    """both_slot=yes means: the files are the bytes (and modes) of this commit and
+    of the two pinned binaries. It is not a review: only the gate pins decide."""
     want = set(p for p, _ in BOTH_SLOT_ROOTFS) | {"usr/share/uc-pxx/boot-control.sha256", "etc/fstab",
-                                                    "usr/sbin/uc-pxx-bootctl"}
-    rootfs = {}
+                                                    "usr/sbin/uc-pxx-bootctl", "usr/sbin/uc-pxx-update-boot"}
+    rootfs, rmode, bad = {}, {}, []
     with tarfile.open(a[0], "r:gz") as tf:
         for m in tf:
             n = m.name[2:] if m.name.startswith("./") else m.name
-            if m.isreg() and n in want:
+            n = n.rstrip("/")
+            base = n.rsplit("/", 1)[-1]
+            if base.startswith("uc-pxx-bootctl-inst") or n in ("usr/libexec/uc-pxx-step2", "etc/tsx/dev-overlay",
+                                                               "etc/tsx/step2-bootctl-inst"):
+                bad.append("rootfs /%s present (uc-pxx-bootctl-inst, a step-2 or a DEV-overlay build)" % n)
+            if n in want:
+                if not m.isreg():
+                    bad.append("rootfs /%s is not a regular file" % n)
+                    continue
                 rootfs[n] = tf.extractfile(m).read()
+                rmode[n] = (m.mode & 0o7777, m.uid, m.gid)
+    entries = cpio_entries(read(a[1]))
+    seen = {}
+    for n, m, b in entries:
+        if n in seen:
+            bad.append("initramfs /%s is in the cpio twice" % n)
+        seen[n] = m
     initramfs = cpio_files(read(a[1]))
-    bad = []
 
-    def compare(where, files, table):
+    def want_mode(where, img, got):
+        exp = 0o644 if img in SOURCED else 0o755
+        if where == "rootfs":
+            mode, uid, gid = got
+            ok = mode == exp and uid == 0 and gid == 0
+            shown = "%o %d:%d" % (mode, uid, gid)
+        else:
+            ok = got & 0o7777 == exp
+            shown = "%o" % (got & 0o7777)
+        if not ok:
+            bad.append("%s /%s has mode %s, not %o root" % (where, img, shown, exp))
+
+    def compare(where, files, table, modes):
         for img, src in table:
             ref = sha256(read(os.path.join(a[2], src)))
             if img not in files:
@@ -448,12 +497,18 @@ def cmd_both_slot(a):
             else:
                 print("%s /%s %s DIFFERS (the commit has %s)" % (where, img, got, ref))
                 bad.append("%s /%s differs" % (where, img))
-    compare("rootfs", rootfs, BOTH_SLOT_ROOTFS)
-    compare("initramfs", initramfs, BOTH_SLOT_INITRAMFS)
-    if "usr/sbin/uc-pxx-bootctl" in rootfs:
-        print("rootfs /usr/sbin/uc-pxx-bootctl %s (the binary of uc-pxx-boot-tools)" % sha256(rootfs["usr/sbin/uc-pxx-bootctl"]))
-    else:
-        bad.append("rootfs /usr/sbin/uc-pxx-bootctl missing")
+            want_mode(where, img, modes[img])
+    compare("rootfs", rootfs, BOTH_SLOT_ROOTFS, rmode)
+    compare("initramfs", initramfs, BOTH_SLOT_INITRAMFS, seen)
+    for img, pin in (("usr/sbin/uc-pxx-bootctl", BOTH_SLOT_BOOTCTL_SHA256), ("usr/sbin/uc-pxx-update-boot", UPDATE_BOOT_SHA256)):
+        if img not in rootfs:
+            bad.append("rootfs /%s missing" % img)
+            continue
+        got = sha256(rootfs[img])
+        print("rootfs /%s %s %s" % (img, got, "ok (the pin)" if got == pin else "DIFFERS (the pin is %s)" % pin))
+        if got != pin:
+            bad.append("rootfs /%s is not the pinned %s" % (img, pin))
+        want_mode("rootfs", img, rmode[img])
     lst = rootfs.get("usr/share/uc-pxx/boot-control.sha256")
     if lst is None:
         bad.append("no /usr/share/uc-pxx/boot-control.sha256")
@@ -466,16 +521,19 @@ def cmd_both_slot(a):
                 continue
             names.append(f[1])
             got = rootfs.get(f[1][1:])
-            if got is not None and sha256(got) != f[0]:
+            if got is None:
+                bad.append("boot-control.sha256: %s is not a checked file of the image" % f[1])
+            elif sha256(got) != f[0]:
                 bad.append("boot-control.sha256: %s is not the listed %s" % (f[1], f[0]))
         print("boot-control.sha256: %d files: %s" % (len(names), " ".join(names)))
-        if "/usr/sbin/uc-pxx-slot" not in names:
-            bad.append("boot-control.sha256 does not name /usr/sbin/uc-pxx-slot")
-    fstab = rootfs.get("etc/fstab", b"").decode("utf-8", "replace")
-    for line in fstab.splitlines():
-        f = line.split()
-        if f and not f[0].startswith("#") and (f[0].startswith("LABEL=") or f[0].startswith("UUID=")):
-            bad.append("the fstab names a file system by %s (%s)" % (f[0], f[1] if len(f) > 1 else "?"))
+        if sorted(names) != sorted(BOTH_SLOT_LIST) or len(set(names)) != len(names):
+            bad.append("boot-control.sha256 does not list exactly the %d files of the both-slot boot control" % len(BOTH_SLOT_LIST))
+    ref = read(os.path.join(a[2], "rootfs/overlay/etc/fstab"))
+    if rootfs.get("etc/fstab") != ref:
+        bad.append("the fstab is not the commit's (%s): a root or /data line by label, UUID or path is not both-slot"
+                   % ("missing" if "etc/fstab" not in rootfs else sha256(rootfs["etc/fstab"])))
+    else:
+        print("rootfs /etc/fstab %s ok" % sha256(ref))
     for b in bad:
         print("not both-slot: %s" % b)
     print("both_slot=%s" % ("no" if bad else "yes"))

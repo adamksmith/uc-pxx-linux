@@ -137,8 +137,8 @@ DEVKEY=
 if [ -n "${UC_PXX_DEV_APK_KEY:-}" ]; then
 	DEVKEY=${UC_PXX_DEV_APK_KEY##*/}
 	case $DEVKEY in *[!A-Za-z0-9._-]*|.*) echo "UC_PXX_DEV_APK_KEY: a bad file name"; exit 1;; *.rsa.pub) ;; *) echo "UC_PXX_DEV_APK_KEY: the name must end in .rsa.pub"; exit 1;; esac
-	for k in "$HERE"/overlay/etc/apk/keys/*.rsa.pub; do
-		[ "${k##*/}" != "$DEVKEY" ] || { echo "UC_PXX_DEV_APK_KEY has the name of the project key"; exit 1; }
+	for k in "$HERE"/overlay/etc/apk/keys/*.rsa.pub /etc/apk/keys/*; do
+		[ "${k##*/}" != "$DEVKEY" ] || { echo "UC_PXX_DEV_APK_KEY has the name of a trusted key (${k##*/})"; exit 1; }
 	done
 	cp "$UC_PXX_DEV_APK_KEY" /etc/apk/keys/"$DEVKEY"
 	DEVKEY_SHA=$(sha256sum "$UC_PXX_DEV_APK_KEY" | cut -d' ' -f1)
@@ -173,7 +173,14 @@ cp -a /etc/apk/keys $R/etc/apk/
 if [ -n "$DEVKEY" ]; then
 	rm -f "$R/etc/apk/keys/$DEVKEY"
 	mkdir -p $R/etc/tsx
-	echo "TEST BUILD: the uc-pxx packages of this image come from a private build, signed by $DEVKEY (sha256 $DEVKEY_SHA). The image does not trust that key. Never publish this image." > $R/etc/tsx/dev-apk-key
+	echo "TEST BUILD: the uc-pxx packages of this image come from a private build, signed by $DEVKEY (sha256 $DEVKEY_SHA). The image does not trust that key. tsx-autoupdate starts in manual mode. Never publish this image." > $R/etc/tsx/dev-apk-key
+	# Such an image must not update itself from the channel (review m4): its
+	# boot control is not the published one. MODE=manual in the user file;
+	# a person may change it on the panel.
+	A=$R/etc/tsx/autoupdate.conf
+	if [ -f "$A" ] && grep -q '^MODE=' "$A"; then sed -i 's/^MODE=.*/MODE=manual/' "$A"
+	else printf '%s\n' '# DEV PACKAGES (mkrootfs.sh UC_PXX_DEV_APK_KEY): never install by itself' 'MODE=manual' >> "$A"; fi
+	log "TEST BUILD: tsx-autoupdate MODE=manual in /etc/tsx/autoupdate.conf"
 fi
 # the panel's list: this project's two repositories FIRST (common + uc-pxx,
 # never another platform's). The block, marker line included, is what

@@ -169,7 +169,9 @@ tools/mainline-payload/build.sh build --snapshot SNAP --resource RESOURCE --vbme
   tree holds them, signed by a key of the build host. The build trusts that
   key for the package install only. The image never trusts it (its
   `/etc/apk/keys` holds only the project key) and has `/etc/tsx/dev-apk-key`;
-  `build-info.txt` says "DEV PACKAGES". The inputs record the sha256 of the key
+  `build-info.txt` says "DEV PACKAGES". tsx-autoupdate of such an image
+  starts in manual mode (`MODE=manual` in `/etc/tsx/autoupdate.conf`), so it
+  never updates itself from the channel. The inputs record the sha256 of the key
   (`DEV_APK_KEY_SHA256`, `none` without it). Never publish such a payload.
 - `--require-both-slot` stops the build unless the payload is a both-slot
   build of the commit (below).
@@ -185,9 +187,14 @@ boot-control, slot and data files of the rootfs (from the packages
 uc-pxx-boot-tools and uc-pxx-board), and `/init`, `rcS`, `uc-pxx-findfs`,
 `uc-pxx-install-rootfs`, the `tsx-data-backup` wrapper, `uc-pxx-rescue-help`,
 `uc-pxx-slot` and `uc-pxx-reboot` of the initramfs in the Linux Image of the
-kernel package. `/usr/share/uc-pxx/boot-control.sha256` must name
-`/usr/sbin/uc-pxx-slot` and match the files, and the fstab must name no file
-system by `LABEL=` or `UUID=`. The verdict goes to `both-slot.txt` (one line
+kernel package, with their modes. `uc-pxx-bootctl` and `uc-pxx-update-boot`
+(not in this repository) must have the shas pinned in `payload.py`.
+`/usr/share/uc-pxx/boot-control.sha256` must list exactly the eight files of
+the both-slot boot control and match them, the fstab must be the commit's
+(no root or `/data` line), and no `uc-pxx-bootctl-inst`, step-2 or DEV-overlay
+marker and no doubled cpio entry may be there. "yes" means "the bytes of this
+commit and of the two pinned binaries"; it is not a review: only the
+installer's gate pins decide what may be installed into slot B. The verdict goes to `both-slot.txt` (one line
 per file with its sha256) and to `build-info.txt`. A build with the packages of
 an older release says "both-slot build: NO": that payload is for slot A only.
 

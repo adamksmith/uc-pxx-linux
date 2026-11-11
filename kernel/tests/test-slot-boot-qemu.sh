@@ -32,6 +32,11 @@
 #   two    two slot words (_a and _b)              -> rescue
 #   bad    slot word _c                            -> rescue
 #   b-label slot _b, system_b without the tsxroot label -> rescue
+#   a-same / b-same  system_a and system_b with the SAME label and UUID (as
+#          after step 2), slot _a / _b -> the root of that slot (not by UUID)
+#   a-gone slot _a, no partition named system_a (system_b present) -> rescue
+#   noword a u-boot,bootargs without a slot word -> rescue
+#   empty  an empty u-boot,bootargs -> rescue
 # The test touches no unit. It needs qemu-system-aarch64, fdtput, python3,
 # docker (an x86_64 image with mkfs.ext4: UC_PXX_TEST_IMAGE, default
 # uc-pxx-datatest:3.24) and, for the kernel build, the tools of
@@ -129,7 +134,7 @@ while off + 110 <= len(data):
 for v in want.values():
     if not os.path.exists(os.path.join(out, v)): sys.exit("no %s in the initramfs" % v)
 EOF
-for id in A B X; do
+for id in A B X SA SB; do
 	d=$R/$id; mkdir -p "$d/bin" "$d/lib" "$d/sbin" "$d/dev" "$d/proc" "$d/sys" "$d/run" "$d/etc"
 	cp "$R/bin/busybox" "$d/bin/busybox"; cp "$R/bin/ld-musl-aarch64.so.1" "$d/lib/"
 	chmod 755 "$d/bin/busybox" "$d/lib/ld-musl-aarch64.so.1"
@@ -145,6 +150,9 @@ done
 docker run --rm --network none -v "$R:/r" "$DIMG" sh -c '
 	set -e
 	for id in A B X; do mkfs.ext4 -q -F -L tsxroot -d /r/$id /r/$id.ext4 24M; done
+	# SA and SB: one label, one UUID and one hash seed, as two copies of one rootfs.ext4
+	for id in SA SB; do mkfs.ext4 -q -F -L tsxroot -U 5801d43c-642d-42b5-8912-338cedfb4eba \
+		-E hash_seed=5801d43c-642d-42b5-8912-338cedfb4eba -d /r/$id /r/$id.ext4 24M; done
 	mkfs.ext4 -q -F -L notroot -d /r/B /r/L.ext4 24M
 	chown '"$(id -u):$(id -g)"' /r/*.ext4'
 # mkdisk OUT NAME=FILE...: a 256 MiB GPT (qemu wants a power of 2) with the
@@ -179,6 +187,8 @@ mkdisk() {
 mkdisk "$W/disk-ab.img" misc=- boot_a=- boot_b=- system_a="$R/A.ext4" system_b="$R/B.ext4" userdata=-
 mkdisk "$W/disk-nob.img" misc=- boot_a=- boot_b=- system_a="$R/A.ext4" system_x="$R/X.ext4" userdata=-
 mkdisk "$W/disk-label.img" misc=- boot_a=- boot_b=- system_a="$R/A.ext4" system_b="$R/L.ext4" userdata=-
+mkdisk "$W/disk-same.img" misc=- boot_a=- boot_b=- system_a="$R/SA.ext4" system_b="$R/SB.ext4" userdata=-
+mkdisk "$W/disk-noa.img" misc=- boot_a=- boot_b=- system_x="$R/X.ext4" system_b="$R/B.ext4" userdata=-
 
 # ---- the device trees and the runs ---------------------------------------------
 QM=(qemu-system-aarch64 -M virt -cpu cortex-a53 -smp 2 -m 1024 -nographic -no-reboot)
@@ -195,35 +205,51 @@ run_case() {
 	cp "$W/virt.dtb" "$dtb"
 	[ "$ub" = - ] || fdtput -t s "$dtb" /chosen u-boot,bootargs "$ub"
 	cp "$W/$disk" "$W/$name.img"
-	timeout -s KILL 300 "${QM[@]}" -kernel "$TIMG" -dtb "$dtb" \
+	# qemu itself in the background (not under timeout: a kill of timeout
+	# leaves qemu running, review m5); its PID in NAME.pid for the EXIT trap
+	"${QM[@]}" -kernel "$TIMG" -dtb "$dtb" \
 		-append "console=ttyAMA0 uc-pxx.rootwait=8 panic=-1" \
 		-device sdhci-pci -device sd-card,drive=sd -drive if=none,id=sd,file="$W/$name.img",format=raw \
 		> "$log" 2>&1 &
-	local q=$!
+	local q=$! t=0
+	echo $q > "$W/$name.pid"
 	while kill -0 $q 2>/dev/null; do
-		if grep -q 'uc-pxx-initramfs: RESCUE:' "$log" 2>/dev/null; then sleep 2; kill -KILL $q 2>/dev/null; break; fi
-		sleep 1
+		if grep -q 'uc-pxx-initramfs: RESCUE:' "$log" 2>/dev/null; then sleep 2; break; fi
+		[ $t -ge 300 ] && { echo "TIMEOUT after 300 s" >> "$log"; break; }
+		sleep 1; t=$((t + 1))
 	done
+	kill -KILL $q 2>/dev/null
 	wait $q 2>/dev/null || true
+	rm -f "$W/$name.pid"
 }
-declare -A DISK=( [a]=disk-ab.img [b]=disk-ab.img [ram]=disk-ab.img [b-gone]=disk-nob.img [two]=disk-ab.img [bad]=disk-ab.img [b-label]=disk-label.img )
+# every qemu of this run ends with the script, also on an error or a signal
+stop_qemus() { for p in "$W"/*.pid; do [ -f "$p" ] && kill -KILL "$(cat "$p")" 2>/dev/null; rm -f "$p"; done; return 0; }
+trap stop_qemus EXIT
+trap 'exit 130' INT TERM
+declare -A DISK=( [a]=disk-ab.img [b]=disk-ab.img [ram]=disk-ab.img [b-gone]=disk-nob.img [two]=disk-ab.img [bad]=disk-ab.img [b-label]=disk-label.img
+	[a-same]=disk-same.img [b-same]=disk-same.img [a-gone]=disk-noa.img [noword]=disk-ab.img [empty]=disk-ab.img )
 declare -A ARGS=( [a]="$UB androidboot.slot_suffix=_a" [b]="$UB androidboot.slot_suffix=_b" [ram]=-
 	[b-gone]="$UB androidboot.slot_suffix=_b" [two]="$UB androidboot.slot_suffix=_a androidboot.slot_suffix=_b"
-	[bad]="$UB androidboot.slot_suffix=_c" [b-label]="$UB androidboot.slot_suffix=_b" )
-declare -A WANT=( [a]=A [b]=B [ram]=A [b-gone]=rescue [two]=rescue [bad]=rescue [b-label]=rescue )
-ORDER="a b ram b-gone two bad b-label"
+	[bad]="$UB androidboot.slot_suffix=_c" [b-label]="$UB androidboot.slot_suffix=_b"
+	[a-same]="$UB androidboot.slot_suffix=_a" [b-same]="$UB androidboot.slot_suffix=_b" [a-gone]="$UB androidboot.slot_suffix=_a"
+	[noword]="$UB" [empty]="" )
+declare -A WANT=( [a]=A [b]=B [ram]=A [b-gone]=rescue [two]=rescue [bad]=rescue [b-label]=rescue
+	[a-same]=SA [b-same]=SB [a-gone]=rescue [noword]=rescue [empty]=rescue )
+ORDER="a b ram b-gone two bad b-label a-same b-same a-gone noword empty"
 echo "== qemu runs: $ORDER"
 for c in $ORDER; do run_case "$c" "${DISK[$c]}" "${ARGS[$c]}" & done
 wait
 for c in $ORDER; do
 	log=$W/$c.log w=${WANT[$c]}
-	got=$(sed -n 's/.*SLOTTEST-ROOT=\([A-Z]\).*/\1/p' "$log" | head -n 1)
+	# the console mixes kernel messages into the lines: printable characters only
+	tr -cd '[:print:]\n' < "$log" > "$log.txt"; log=$log.txt
+	got=$(sed -n 's/.*SLOTTEST-ROOT=\([A-Z]*\).*/\1/p' "$log" | head -n 1)
 	sel=$(sed -n 's/.*uc-pxx-initramfs: \(booted slot .*\)$/\1/p' "$log" | head -n 1 | tr -d '\r')
 	resc=$(sed -n 's/.*uc-pxx-initramfs: RESCUE: \(.*\)$/\1/p' "$log" | head -n 1 | tr -d '\r')
 	if [ "$w" = rescue ]; then
 		if [ -n "$resc" ] && [ -z "$got" ]; then ok "$c: rescue ($resc)"; else bad "$c: expected the rescue, got root '${got:-none}' ($sel)"; fi
 	else
-		dev=$(sed -n 's/.*SLOTTEST-ROOT=[A-Z] DEV=\([^ ]*\).*/\1/p' "$log" | head -n 1 | tr -d '\r')
+		dev=$(sed -n 's/.*SLOTTEST-ROOT=[A-Z]* DEV=\(\/dev\/mmcblk[0-9]*p[0-9]*\).*/\1/p' "$log" | head -n 1)
 		if [ "$got" = "$w" ] && [ -z "$resc" ]; then ok "$c: root $got on $dev ($sel)"; else bad "$c: expected root $w, got '${got:-none}' (rescue '${resc:-none}', $sel)"; fi
 	fi
 done

@@ -295,6 +295,10 @@ if [ -n "$DKFILE" ]; then
 	[ -f "$DKFILE" ] || die "--dev-apk-key $DKFILE: no such file"
 	case ${DKFILE##*/} in *[!A-Za-z0-9._-]*|.*) die "--dev-apk-key: a bad file name";; *.rsa.pub) ;; *) die "--dev-apk-key: the name must end in .rsa.pub";; esac
 	grep -q 'PRIVATE KEY' "$DKFILE" && die "--dev-apk-key $DKFILE holds a private key"
+	case ${DKFILE##*/} in tsx-mainline-*|alpine-devel@*) die "--dev-apk-key: the name ${DKFILE##*/} is the name of a trusted key";; esac
+	for k in "$HERE"/rootfs/overlay/etc/apk/keys/*; do
+		[ "${k##*/}" != "${DKFILE##*/}" ] || die "--dev-apk-key: the name ${DKFILE##*/} is the project key's"
+	done
 	grep -q -- '-----BEGIN PUBLIC KEY-----' "$DKFILE" || die "--dev-apk-key $DKFILE is not a public key"
 	DEVKEY=$(readlink -f "$DKFILE")
 	pin DEV_APK_KEY_SHA256 "$(sha "$DEVKEY")"
