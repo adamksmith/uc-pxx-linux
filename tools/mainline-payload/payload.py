@@ -428,7 +428,7 @@ STEP2_MARKER = "etc/tsx/step2-bootctl-inst"
 STEP2_SET = {
     "usr/libexec/uc-pxx-step2": ("dir", 0o700),
     "usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst": ("20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203", 0o700),
-    "usr/libexec/uc-pxx-step2/uc-pxx-step2": ("524e89ba9cd6387a9f6d411169d215bda90d75087e2a6e4e9cc99fb1be5f6b48", 0o700),
+    "usr/libexec/uc-pxx-step2/uc-pxx-step2": ("b857680f0b063a8e1f8e548ef480dc170817ce0adeb1b7271cfb65a76472e7dd", 0o700),
     "etc/init.d/uc-pxx-step2": ("src:rootfs/step2/init.d/uc-pxx-step2", 0o755),
     "etc/conf.d/uc-pxx-step2": ("src:rootfs/step2/conf.d/uc-pxx-step2", 0o644),
     "etc/uc-pxx-step2": ("dir", 0o755),
@@ -437,7 +437,21 @@ STEP2_SET = {
 }
 # the two binaries by sha256 (a copy under another name is found by its bytes)
 STEP2_SHAS = {v: k for k, (v, m) in STEP2_SET.items() if re.fullmatch("[0-9a-f]{64}", v)}
-STEP2_SIZES = (777976, 4849824)
+STEP2_SIZES = (777976, 4980896)
+# The USB set of every both-slot build (mkrootfs.sh UC_PXX_XFER_BIN,
+# docs/usb.md; uc-pxx-installer mainline-rc-4): exactly these paths, the same
+# forms as STEP2_SET. A both-slot payload must have it; an entry named
+# uc-pxx-xfer* or uc-pxx-usb* that is not one of them says no.
+USB_SET = {
+    "usr/libexec/uc-pxx-xfer": ("dir", 0o755),
+    "usr/libexec/uc-pxx-xfer/uc-pxx-xfer": ("d7db68aba33d2ac4fcb32457957065527939f10322f9f2c77790a12817d275b9", 0o755),
+    "etc/init.d/uc-pxx-usb": ("src:rootfs/usb/init.d/uc-pxx-usb", 0o755),
+    "etc/conf.d/uc-pxx-usb": ("src:rootfs/usb/conf.d/uc-pxx-usb", 0o644),
+    "usr/share/uc-pxx-usb": ("dir", 0o755),
+    "usr/share/uc-pxx-usb/finish.json": ("src:rootfs/usb/finish.json", 0o644),
+    "etc/ssh/sshd_config.d/uc-pxx-usb.conf": ("src:rootfs/usb/sshd_config.d/uc-pxx-usb.conf", 0o644),
+    "etc/runlevels/default/uc-pxx-usb": ("link:/etc/init.d/uc-pxx-usb", None),
+}
 
 
 def cpio_entries(data):
@@ -467,7 +481,7 @@ def cmd_both_slot(a):
     of the two pinned binaries. It is not a review: only the gate pins decide."""
     want = set(p for p, _ in BOTH_SLOT_ROOTFS) | {"usr/share/uc-pxx/boot-control.sha256", "etc/fstab",
                                                     "usr/sbin/uc-pxx-bootctl", "usr/sbin/uc-pxx-update-boot"}
-    rootfs, rmode, bad, step2 = {}, {}, [], {}
+    rootfs, rmode, bad, step2, usb = {}, {}, [], {}, {}
     with tarfile.open(a[0], "r:gz") as tf:
         for m in tf:
             n = re.sub(r"^(\./|/)+", "", m.name).rstrip("/")
@@ -479,6 +493,11 @@ def cmd_both_slot(a):
                 h = hashlib.sha256(tf.extractfile(m).read()).hexdigest()
                 if h in STEP2_SHAS and STEP2_SHAS[h] != n:
                     bad.append("rootfs /%s is a copy of /%s" % (n, STEP2_SHAS[h]))
+            if n in USB_SET or base.startswith("uc-pxx-xfer") or base.startswith("uc-pxx-usb"):
+                kind = "dir" if m.isdir() else "link:" + m.linkname if m.issym() else "file" if m.isreg() else "other"
+                data = tf.extractfile(m).read() if m.isreg() else None
+                usb[n] = (kind, m.mode & 0o7777, m.uid, m.gid, data)
+                continue
             if (n == STEP2_MARKER or n in STEP2_SET or base.startswith("uc-pxx-bootctl-inst") or base.startswith("uc-pxx-step2")
                     or n.startswith("etc/uc-pxx-step2/") or n.startswith("usr/libexec/uc-pxx-step2/")):
                 kind = "dir" if m.isdir() else "link:" + m.linkname if m.issym() else "file" if m.isreg() else "other"
@@ -555,16 +574,15 @@ def cmd_both_slot(a):
         print("boot-control.sha256: %d files: %s" % (len(names), " ".join(names)))
         if sorted(names) != sorted(BOTH_SLOT_LIST) or len(set(names)) != len(names):
             bad.append("boot-control.sha256 does not list exactly the %d files of the both-slot boot control" % len(BOTH_SLOT_LIST))
-    if STEP2_MARKER in step2:
-        got = {n: v for n, v in step2.items() if n != STEP2_MARKER}
-        for n in sorted(set(got) | set(STEP2_SET)):
-            if n not in STEP2_SET:
-                bad.append("step 2: /%s is not a file of a step-2 build" % n)
+    def check_set(label, got, table):
+        for n in sorted(set(got) | set(table)):
+            if n not in table:
+                bad.append("%s: /%s is not a file of the set" % (label, n))
                 continue
             if n not in got:
-                bad.append("step 2: /%s missing" % n)
+                bad.append("%s: /%s missing" % (label, n))
                 continue
-            want_v, want_m = STEP2_SET[n]
+            want_v, want_m = table[n]
             kind, mode, uid, gid, data = got[n]
             if want_v == "dir":
                 ok = kind == "dir"
@@ -577,9 +595,14 @@ def cmd_both_slot(a):
             else:
                 ok = kind == "file" and sha256(data) == want_v
             if not ok:
-                bad.append("step 2: /%s is not the pinned %s" % (n, want_v))
+                bad.append("%s: /%s is not the pinned %s" % (label, n, want_v))
             if want_m is not None and (mode != want_m or uid != 0 or gid != 0):
-                bad.append("step 2: /%s has mode %o %d:%d, not %o root" % (n, mode, uid, gid, want_m))
+                bad.append("%s: /%s has mode %o %d:%d, not %o root" % (label, n, mode, uid, gid, want_m))
+    check_set("usb", usb, USB_SET)
+    print("usb=yes (the USB set: uc-pxx-xfer, uc-pxx-usb, its conf, finish.json, the sshd rule)" if not [b for b in bad if b.startswith("usb")] else "usb=bad")
+    if STEP2_MARKER in step2:
+        got = {n: v for n, v in step2.items() if n != STEP2_MARKER}
+        check_set("step 2", got, STEP2_SET)
         print("step2=yes (a STEP-2 build: r2, uc-pxx-step2 and the service checked)" if not [b for b in bad if b.startswith("step 2")] else "step2=bad")
     else:
         for n in sorted(step2):

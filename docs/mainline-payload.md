@@ -258,3 +258,10 @@ layout with made-up inputs (the assembly of `payload.py` equals
 `check-template` and of the manifest generator, and that `build.sh` refuses a
 checkout with another kernel pin. `UC_PXX_RESOURCE=FILE` adds a whole
 made-up manifest against the contract.
+
+## The USB set (both-slot builds)
+
+A both-slot payload (`--require-both-slot`) needs `--xfer-bin` (the pinned
+`uc-pxx-xfer`): the image then has the USB interface of [usb.md](usb.md). The
+inputs file (format 6) records `XFER_BIN_SHA256`; `payload.py both-slot` checks
+the set (`usb=yes`).
