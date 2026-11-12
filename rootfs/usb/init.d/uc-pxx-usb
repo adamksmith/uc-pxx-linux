@@ -30,28 +30,9 @@ start_pre() {
 		mount -t configfs configfs /sys/kernel/config || return 1
 	fi
 	case "${UC_PXX_USB_NET:-off}" in
-	on) command_args="usb --net"; einfo "the USB network (NCM) is on: ssh by key only on 10.99.0.2" ;;
+	on) command_args="usb --net"; einfo "the USB network (NCM) is on: this unit is 10.99.0.2 on it (uc-pxx-xfer sets it), ssh by key only" ;;
 	off) ;;
 	*) ewarn "UC_PXX_USB_NET=${UC_PXX_USB_NET}: not on or off, taken as off" ;;
 	esac
-	return 0
-}
-
-# The unit's address on the USB network (only with UC_PXX_USB_NET=on): set when
-# the network function is bound (the computer is 10.99.0.1).
-start_post() {
-	[ "${UC_PXX_USB_NET:-off}" = on ] || return 0
-	(
-		f=/sys/kernel/config/usb_gadget/uc-pxx-step2/functions/ncm.usb0/ifname
-		i=0
-		while [ $i -lt 120 ]; do
-			n=$(cat $f 2> /dev/null)
-			case "$n" in usb*) [ -e "/sys/class/net/$n" ] && break ;; esac
-			sleep 1
-			i=$((i + 1))
-		done
-		[ -n "$n" ] && ip addr add 10.99.0.2/24 dev "$n" 2> /dev/null
-		[ -n "$n" ] && ip link set "$n" up
-	) > /dev/null 2>&1 &
 	return 0
 }

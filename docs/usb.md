@@ -36,8 +36,8 @@ writes only configfs, its mounts and its files in `/run`.
 
 **The USB network** (`UC_PXX_USB_NET=on`, for supervised or development units
 only): an NCM function after the vendor interface; the unit is 10.99.0.2/24, the
-computer 10.99.0.1 (set by hand). ssh there takes a key only
-(`/root/.ssh/authorized_keys`). Every service of the unit's LAN side is then
+computer 10.99.0.1 (set by hand; `uc-pxx-xfer` sets the unit's side on every new interface and turns IPv6 off
+there). ssh from the cable network takes a key only (`/root/.ssh/authorized_keys`), also to the unit's LAN address. Every service of the unit's LAN side is then
 also reachable from the computer on the cable. Set it with
 `rc-service uc-pxx-usb restart` after the change. OFF by default.
 

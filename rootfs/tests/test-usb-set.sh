@@ -31,7 +31,7 @@ assert [x["name"] for x in f] == ["uc-pxx-step2-finish", "uc-pxx-bootctl-inst"]
 assert all(set(x) == {"name", "size", "sha256"} and re.fullmatch("[0-9a-f]{64}", x["sha256"]) and 0 < x["size"] <= 32 << 20 for x in f)
 assert f[1] == {"name": "uc-pxx-bootctl-inst", "size": 777976, "sha256": "20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203"}
 EOP
-grep -q '^Match LocalAddress 10.99.0.2$' "$U/sshd_config.d/uc-pxx-usb.conf" && grep -q 'PasswordAuthentication no' "$U/sshd_config.d/uc-pxx-usb.conf" &&
+grep -q "^Match LocalAddress 10.99.0.2$" "$U/sshd_config.d/uc-pxx-usb.conf" && grep -q "^Match Address 10.99.0.0/24$" "$U/sshd_config.d/uc-pxx-usb.conf" && grep -q 'PasswordAuthentication no' "$U/sshd_config.d/uc-pxx-usb.conf" &&
 	grep -q 'AuthenticationMethods publickey' "$U/sshd_config.d/uc-pxx-usb.conf" && ok "ssh by key only on 10.99.0.2" || bad "the sshd drop-in"
 
 echo "== the step of mkrootfs.sh on a made-up tree =="
