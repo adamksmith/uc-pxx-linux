@@ -490,7 +490,7 @@ fi
 # both-slot gate pins each of these files (internal/mainline bothSlotUSB) and
 # refuses them in a slot-A payload. Without UC_PXX_XFER_BIN no file of these
 # names may be in the image.
-XFER_SHA256=5d165533a3d09c508670f15baeb810e8d991605adda49673f24368c3c651a5ac
+XFER_SHA256=42d764e0da7b5871de9980e1205c66769e0092f8a63d53a8b9353a93831c952f
 XFER_PATH=usr/libexec/uc-pxx-xfer/uc-pxx-xfer
 XFER_ID=990
 USB_FILES="etc/conf.d/uc-pxx-usb etc/init.d/uc-pxx-usb etc/runlevels/default/uc-pxx-usb etc/ssh/sshd_config.d/uc-pxx-usb.conf usr/libexec/uc-pxx-xfer usr/libexec/uc-pxx-xfer/uc-pxx-xfer usr/share/uc-pxx-usb "
@@ -546,11 +546,12 @@ fi
 # MAINLINE-LINUX-INT-2026-11-10.md R-F.3, BOTH-SLOT-PACKAGING-2026-11-10.md).
 STEP2_INST_SHA256=20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203
 STEP2_INST_PATH=usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst
-# uc-pxx-step2 of uc-pxx-installer mainline-rc-4 6ac0b2c (ci/build-step2.sh,
+# uc-pxx-step2 of uc-pxx-installer mainline-rc-5 d7e2113 (ci/build-step2.sh,
 # built twice byte-identical; the USB receive of the payload, the finish
-# service, the RC-4 review fixes; it replaces b857680f... of 22eaf31, 524e89ba... of mainline-rc-3 3c397a7, 7049463f... of d754663, 13ea2508... of 6aab316, 3c2ba06f... of mainline-rc-2 d105ba2, b8c2a6d9... of c0d8f0b, 1cbb32ae... of mainline-rc be239e3,
+# service, the RC-4 review fixes, the uc-pxx-xfer pin 42d764e0; it replaces
+# ca1c1e67... of mainline-rc-4 6ac0b2c, b857680f... of 22eaf31, 524e89ba... of mainline-rc-3 3c397a7, 7049463f... of d754663, 13ea2508... of 6aab316, 3c2ba06f... of mainline-rc-2 d105ba2, b8c2a6d9... of c0d8f0b, 1cbb32ae... of mainline-rc be239e3,
 # f7cc1d33... of 1605579, a4e753cc... of 9627b27 and b7710fa3... of mainline-step2-rest b9b2e98); NOT yet reviewed for the safety rules: a new build needs a new pin here
-STEP2_BIN_SHA256=ca1c1e67cec46130186ae9008fc9c3760a819c220588a3abbf3518989d676cb2
+STEP2_BIN_SHA256=a44632a6656acb21098b32791add441aa05d7d30d67c81ce6951c43196df0e84
 STEP2_BIN_PATH=usr/libexec/uc-pxx-step2/uc-pxx-step2
 STEP2_DATA_SHA256=9162c65df08ac5577e38a2fe124d8cb1434b9b2bcfe787d6fba76055b8006791
 STEP2_DATA_PATH=usr/sbin/uc-pxx-data-migrate

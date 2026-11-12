@@ -428,7 +428,7 @@ STEP2_MARKER = "etc/tsx/step2-bootctl-inst"
 STEP2_SET = {
     "usr/libexec/uc-pxx-step2": ("dir", 0o700),
     "usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst": ("20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203", 0o700),
-    "usr/libexec/uc-pxx-step2/uc-pxx-step2": ("ca1c1e67cec46130186ae9008fc9c3760a819c220588a3abbf3518989d676cb2", 0o700),
+    "usr/libexec/uc-pxx-step2/uc-pxx-step2": ("a44632a6656acb21098b32791add441aa05d7d30d67c81ce6951c43196df0e84", 0o700),
     "etc/init.d/uc-pxx-step2": ("src:rootfs/step2/init.d/uc-pxx-step2", 0o755),
     "etc/conf.d/uc-pxx-step2": ("src:rootfs/step2/conf.d/uc-pxx-step2", 0o644),
     "etc/uc-pxx-step2": ("dir", 0o755),
@@ -444,7 +444,7 @@ STEP2_SIZES = (777976, 4980896)
 # uc-pxx-xfer* or uc-pxx-usb* that is not one of them says no.
 USB_SET = {
     "usr/libexec/uc-pxx-xfer": ("dir", 0o755),
-    "usr/libexec/uc-pxx-xfer/uc-pxx-xfer": ("5d165533a3d09c508670f15baeb810e8d991605adda49673f24368c3c651a5ac", 0o755),
+    "usr/libexec/uc-pxx-xfer/uc-pxx-xfer": ("42d764e0da7b5871de9980e1205c66769e0092f8a63d53a8b9353a93831c952f", 0o755),
     "etc/init.d/uc-pxx-usb": ("src:rootfs/usb/init.d/uc-pxx-usb", 0o755),
     "etc/conf.d/uc-pxx-usb": ("src:rootfs/usb/conf.d/uc-pxx-usb", 0o644),
     "usr/share/uc-pxx-usb": ("dir", 0o755),
