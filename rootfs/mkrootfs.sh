@@ -626,12 +626,14 @@ STEP2_INST_SHA256=20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b002
 STEP2_INST_PATH=usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst
 # uc-pxx-step2 of uc-pxx-installer (ci/build-step2.sh, built twice
 # byte-identical; its gate lists the normal release payloads of the same
-# release; the commit and the payloads are in the release record). Earlier
+# release: f092d15e... of uc-pxx-installer mainline-rc-7 0d8b5a8, whose gate lists 0.2.0-rc7
+# (b5df32c7) and 0.2.0-rc7-eu (62acc9ff, the end-user payload); the record
+# MAINLINE-RC7-2026-11-13.md). Earlier
 # pins: 930a2d18... of mainline-rc-6 81a321f, fe4502b9... of mainline-rc-6, aace79f3... of mainline-rc-5,
 # a44632a6... of d7e2113,
 # ca1c1e67... of mainline-rc-4 6ac0b2c, b857680f... of 22eaf31, 524e89ba... of mainline-rc-3 3c397a7, 7049463f... of d754663, 13ea2508... of 6aab316, 3c2ba06f... of mainline-rc-2 d105ba2, b8c2a6d9... of c0d8f0b, 1cbb32ae... of mainline-rc be239e3,
 # f7cc1d33... of 1605579, a4e753cc... of 9627b27 and b7710fa3... of mainline-step2-rest b9b2e98); NOT yet reviewed for the safety rules: a new build needs a new pin here
-STEP2_BIN_SHA256=930a2d18b11847385e457767929753ef4eb65e8f5f2519642ff46b5421bdadb6
+STEP2_BIN_SHA256=f092d15e26af72cc111ab03e460b4fcbca912d4fcdfc4be08e2bf449edf20df9
 STEP2_BIN_PATH=usr/libexec/uc-pxx-step2/uc-pxx-step2
 STEP2_DATA_SHA256=9162c65df08ac5577e38a2fe124d8cb1434b9b2bcfe787d6fba76055b8006791
 STEP2_DATA_PATH=usr/sbin/uc-pxx-data-migrate
