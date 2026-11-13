@@ -121,7 +121,7 @@
 #   TSX_APK_URL         the apk repository that the panel lists
 #   AUTHORIZED_KEYS_SHA256  none, or the sha256 of --authorized-keys
 #   AUTOUPDATE_MODE     manual (the default: the slot never installs by itself;
-#                       /etc/tsx/autoupdate.conf MODE=manual, AUTO_RESTART=on)
+#                       /etc/tsx/autoupdate.conf MODE=manual, AUTO_RESTART=off)
 #                       or auto (--autoupdate-mode; the tsx-autoupdate defaults)
 #   SSH_ACCESS          keys (the maintainer build: --authorized-keys, sshd on)
 #                       or setup (the end-user build: no key, sshd off until the
@@ -508,12 +508,12 @@ TOTAL=$((TS + RS + MS))
 	echo "rootfs.ext4 headroom: IMG_HEADROOM_MB=$HEADROOM (mkrootfs.sh adds 5 % of the content)"
 	if [ "${GOT[AUTHORIZED_KEYS_SHA256]}" = none ]; then
 		echo "root login: no ssh key, the root password locked (no login until the panel gets a key)"
-		[ "${GOT[SSH_ACCESS]}" != setup ] || echo "SSH access: setup (the end-user build): sshd is off until the setup page gives root an SSH key (config.d/uc_pxx_ssh.sh)"
+		[ "${GOT[SSH_ACCESS]}" != setup ] || echo "SSH access: setup (the end-user build): sshd is off until the setup page gives root an SSH key (config.d/uc_pxx_ssh.sh); sshd takes keys only (sshd_config.d/00-uc-pxx-key-only.conf)"
 	else
 		echo "root login: ssh keys only (authorized_keys sha256 ${GOT[AUTHORIZED_KEYS_SHA256]}), the root password locked;" \
 			"FOR THE UNITS OF THE KEY OWNER ONLY: never publish this payload for other users"
 	fi
-	echo "tsx-autoupdate: AUTOUPDATE_MODE=${GOT[AUTOUPDATE_MODE]}$([ "${GOT[AUTOUPDATE_MODE]}" = manual ] && echo " (/etc/tsx/autoupdate.conf MODE=manual, AUTO_RESTART=on: never installs by itself)")"
+	echo "tsx-autoupdate: AUTOUPDATE_MODE=${GOT[AUTOUPDATE_MODE]}$([ "${GOT[AUTOUPDATE_MODE]}" = manual ] && echo " (/etc/tsx/autoupdate.conf MODE=manual, AUTO_RESTART=off: never installs or restarts by itself)")"
 	if [ "${GOT[STEP2_BOOTCTL_INST_SHA256]}" = none ]; then
 		echo "uc-pxx-bootctl-inst: not in the rootfs (the default build)"
 	else

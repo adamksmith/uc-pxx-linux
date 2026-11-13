@@ -40,7 +40,7 @@
 #               holds. profiles/*.list, profile.sh and docs/rootfs.md
 #               "Profiles" say what each profile has.
 #   UC_PXX_AUTOUPDATE_MODE  optional: manual or auto. manual writes MODE=manual
-#               and AUTO_RESTART=on into /etc/tsx/autoupdate.conf (a mainline
+#               and AUTO_RESTART=off into /etc/tsx/autoupdate.conf (a mainline
 #               payload: the slot never installs by itself). Empty or auto: the
 #               defaults of tsx-autoupdate (MODE=auto)
 #   UC_PXX_SSH_ACCESS  optional: keys or setup. keys: the image has the keys of
@@ -201,10 +201,12 @@ if [ -n "$DEVKEY" ]; then
 fi
 # The tsx-autoupdate mode of a mainline payload (UC_PXX_AUTOUPDATE_MODE; the
 # RC-5 release review MINOR-2): manual = the slot never installs by itself. A
-# person installs from Home Assistant or with `tsx-autoupdate now`, and such an
-# install restarts when it needs one (AUTO_RESTART=on, only after the board
-# step's status 0). UPDATE_MODE and UPDATE_AUTO_RESTART of panel.conf (the setup
-# page, Home Assistant) still win over this file.
+# person installs from Home Assistant or with `tsx-autoupdate now`. Such an
+# install does not restart the unit (AUTO_RESTART=off, owner 2026-11-12, the RC-6
+# code review MINOR-5): Home Assistant shows "Restart required", and the person
+# picks the time of the restart into the new boot image. UPDATE_MODE and
+# UPDATE_AUTO_RESTART of panel.conf (the setup page, Home Assistant) still win
+# over this file.
 case "${UC_PXX_AUTOUPDATE_MODE:-}" in
 ''|auto) ;;
 manual)
@@ -213,11 +215,12 @@ manual)
 	[ ! -L "$A" ] || { echo "ERROR: $A is a link"; exit 1; }
 	if [ -f "$A" ]; then sed -i -e '/^MODE=/d' -e '/^AUTO_RESTART=/d' "$A"; fi
 	printf '%s\n' '# the default of this mainline build (tools/mainline-payload/build.sh AUTOUPDATE_MODE=manual):' \
-		'# never install by itself; an install from Home Assistant restarts when it needs one' 'MODE=manual' 'AUTO_RESTART=on' >> "$A"
+		'# never install by itself; a person restarts after an install' 'MODE=manual' 'AUTO_RESTART=off' >> "$A"
 	chmod 644 "$A"
-	[ "$(grep -c '^MODE=' "$A")" = 1 ] && grep -qx 'MODE=manual' "$A" && grep -qx 'AUTO_RESTART=on' "$A" ||
-		{ echo "ERROR: /etc/tsx/autoupdate.conf does not say MODE=manual and AUTO_RESTART=on once"; exit 1; }
-	log "tsx-autoupdate: MODE=manual, AUTO_RESTART=on in /etc/tsx/autoupdate.conf (UC_PXX_AUTOUPDATE_MODE)";;
+	[ "$(grep -c '^MODE=' "$A")" = 1 ] && [ "$(grep -c '^AUTO_RESTART=' "$A")" = 1 ] && grep -qx 'MODE=manual' "$A" &&
+		grep -qx 'AUTO_RESTART=off' "$A" ||
+		{ echo "ERROR: /etc/tsx/autoupdate.conf does not say MODE=manual and AUTO_RESTART=off once"; exit 1; }
+	log "tsx-autoupdate: MODE=manual, AUTO_RESTART=off in /etc/tsx/autoupdate.conf (UC_PXX_AUTOUPDATE_MODE)";;
 *) echo "ERROR: UC_PXX_AUTOUPDATE_MODE='$UC_PXX_AUTOUPDATE_MODE' is not manual or auto"; exit 1;;
 esac
 # the panel's list: this project's two repositories FIRST (common + uc-pxx,
@@ -510,7 +513,11 @@ fi
 #   setup  the end-user build: no AUTHORIZED_KEYS (no /root/.ssh), sshd is not
 #          in the default runlevel, and the tsx-config plugin
 #          /usr/local/lib/tsx/config.d/uc_pxx_ssh.sh (root, 0644, the folder
-#          0755) turns sshd on when the setup page gives root an SSH key
+#          0755) turns sshd on when the setup page gives root an SSH key.
+#          sshd takes keys only: /etc/ssh/sshd_config.d/00-uc-pxx-key-only.conf
+#          (PasswordAuthentication no, KbdInteractiveAuthentication no; it sorts
+#          before tsx.conf of tsx-base, and sshd keeps the first value). A root
+#          password of the setup page is for the console only.
 UC_PXX_SSH_PLUGIN=usr/local/lib/tsx/config.d/uc_pxx_ssh.sh
 case "${UC_PXX_SSH_ACCESS:-}" in
 '') [ ! -e "$R/$UC_PXX_SSH_PLUGIN" ] || { echo "ERROR: the image has $UC_PXX_SSH_PLUGIN without UC_PXX_SSH_ACCESS=setup"; exit 1; };;
@@ -518,16 +525,23 @@ keys)
 	[ -s $R/root/.ssh/authorized_keys ] || { echo "ERROR: UC_PXX_SSH_ACCESS=keys needs AUTHORIZED_KEYS"; exit 1; }
 	[ -L $R/etc/runlevels/default/sshd ] || { echo "ERROR: UC_PXX_SSH_ACCESS=keys: sshd is not in the default runlevel"; exit 1; }
 	[ ! -e "$R/$UC_PXX_SSH_PLUGIN" ] || { echo "ERROR: UC_PXX_SSH_ACCESS=keys: the image has $UC_PXX_SSH_PLUGIN"; exit 1; }
+	[ ! -e $R/etc/ssh/sshd_config.d/00-uc-pxx-key-only.conf ] || { echo "ERROR: UC_PXX_SSH_ACCESS=keys: the image has the end-user key-only rule"; exit 1; }
 	log "SSH access: keys (the keys of AUTHORIZED_KEYS, sshd in the default runlevel)";;
 setup)
-	[ ! -e $R/root/.ssh/authorized_keys ] || { echo "ERROR: UC_PXX_SSH_ACCESS=setup: the image has /root/.ssh/authorized_keys"; exit 1; }
+	[ ! -e $R/root/.ssh ] || { echo "ERROR: UC_PXX_SSH_ACCESS=setup: the image has /root/.ssh"; exit 1; }
 	[ -L $R/etc/runlevels/default/sshd ] || { echo "ERROR: UC_PXX_SSH_ACCESS=setup: the profile has no sshd in the default runlevel"; exit 1; }
 	rm -f $R/etc/runlevels/default/sshd
 	[ -e $R/etc/init.d/sshd ] || { echo "ERROR: UC_PXX_SSH_ACCESS=setup: no /etc/init.d/sshd"; exit 1; }
 	install -d -m 755 -o 0 -g 0 $R/usr/local/lib/tsx/config.d
 	install -m 644 -o 0 -g 0 "$HERE/ssh/uc_pxx_ssh.sh" "$R/$UC_PXX_SSH_PLUGIN"
+	install -d -m 755 -o 0 -g 0 $R/etc/ssh/sshd_config.d
+	install -m 644 -o 0 -g 0 "$HERE/ssh/00-uc-pxx-key-only.conf" $R/etc/ssh/sshd_config.d/00-uc-pxx-key-only.conf
+	grep -q '^Include /etc/ssh/sshd_config.d/\*\.conf' $R/etc/ssh/sshd_config ||
+		{ echo "ERROR: /etc/ssh/sshd_config does not include sshd_config.d (the key-only rule of the end-user build)"; exit 1; }
+	[ "$(cd $R/etc/ssh/sshd_config.d && ls | head -n 1)" = 00-uc-pxx-key-only.conf ] ||
+		{ echo "ERROR: 00-uc-pxx-key-only.conf is not the first file of sshd_config.d"; exit 1; }
 	[ -z "$(find $R/etc/runlevels -name sshd)" ] || { echo "ERROR: UC_PXX_SSH_ACCESS=setup: sshd is still in a runlevel"; exit 1; }
-	log "SSH access: setup (no key, sshd off until the setup page gives root an SSH key: $UC_PXX_SSH_PLUGIN)";;
+	log "SSH access: setup (no key, sshd off until the setup page gives root an SSH key: $UC_PXX_SSH_PLUGIN; keys only)";;
 *) echo "ERROR: UC_PXX_SSH_ACCESS='$UC_PXX_SSH_ACCESS' is not keys or setup"; exit 1;;
 esac
 

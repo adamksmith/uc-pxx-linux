@@ -176,11 +176,12 @@ tools/mainline-payload/build.sh build --snapshot SNAP --resource RESOURCE --vbme
 - `--require-both-slot` stops the build unless the payload is a both-slot
   build of the commit (below).
 - `--autoupdate-mode manual|auto` (default `manual`) sets the tsx-autoupdate
-  mode of the slot. `manual` writes `MODE=manual` and `AUTO_RESTART=on` into
+  mode of the slot. `manual` writes `MODE=manual` and `AUTO_RESTART=off` into
   `/etc/tsx/autoupdate.conf`: the slot never installs by itself, and an
-  install from Home Assistant (or `tsx-autoupdate now`) restarts when it needs
-  one. `UPDATE_MODE` and `UPDATE_AUTO_RESTART` of panel.conf still win. The
-  inputs record it (`AUTOUPDATE_MODE`).
+  install from Home Assistant (or `tsx-autoupdate now`) does not restart the
+  unit. Home Assistant then shows "Restart required", and the person picks the
+  time of the restart. `UPDATE_MODE` and `UPDATE_AUTO_RESTART` of panel.conf
+  still win. The inputs record it (`AUTOUPDATE_MODE`).
 - `--ssh-access keys|setup` sets how root gets in over ssh (below, "SSH
   access"). The default is `keys` with `--authorized-keys`, else `setup`. The
   inputs record it (`SSH_ACCESS`).
@@ -201,7 +202,11 @@ A payload comes in one of two forms:
   `/root/.ssh/authorized_keys`. The tsx-config plugin
   `/usr/local/lib/tsx/config.d/uc_pxx_ssh.sh` (`rootfs/ssh/uc_pxx_ssh.sh`)
   then adds sshd to the default runlevel and starts it. The panel.conf key
-  `SSH_SERVER=off` keeps sshd off, also with a key. The plugin changes only the
+  `SSH_SERVER=off` keeps sshd off, also with a key. sshd of this build takes
+  keys only: `/etc/ssh/sshd_config.d/00-uc-pxx-key-only.conf` sets
+  `PasswordAuthentication no` and `KbdInteractiveAuthentication no` (the file
+  sorts before `tsx.conf` of tsx-base, and sshd keeps the first value). A root
+  password of the setup page is for the console only. The plugin changes only the
   runlevel link of sshd on the root file system and the sshd service. It
   writes nothing to the boot area of the eMMC. The test is
   `rootfs/tests/test-ssh-plugin.sh`.
