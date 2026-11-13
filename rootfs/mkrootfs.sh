@@ -611,19 +611,24 @@ fi
 # pinned uc-pxx-step2 (UC_PXX_STEP2_BIN, required with it) at
 # /usr/libexec/uc-pxx-step2/uc-pxx-step2 (root, 0700, the folder 0700), the
 # OpenRC service uc-pxx-step2 (rootfs/step2/, in the default runlevel; it
-# starts `uc-pxx-step2 service` in the background), its conf file (no payload
-# folder) and the supervised marker /etc/uc-pxx-step2/supervised (the service
-# then never writes or counts down by itself). The data tool of step 2 is
+# starts `uc-pxx-step2 service` in the background) and its conf file. The kind
+# of the STEP-2 build follows the SSH access (uc-pxx-linux rc-payload-7, owner
+# Q-T5 2026-11-12): a SUPERVISED STEP-2 build (UC_PXX_SSH_ACCESS keys or empty:
+# the maintainer's key) has the supervised marker /etc/uc-pxx-step2/supervised
+# (the service then never writes or counts down by itself); an END-USER STEP-2
+# build (UC_PXX_SSH_ACCESS=setup: no ssh key) has no /etc/uc-pxx-step2 at all
+# (its step 2 may start by itself, AUTO-STEP2, and installs only an end-user
+# payload). The marker /etc/tsx/step2-bootctl-inst says which. The data tool of step 2 is
 # /usr/sbin/uc-pxx-data-migrate of uc-pxx-board (pinned below). Such an image
 # is for no unit until the owner enters the RULES lines (proposed text:
 # MAINLINE-LINUX-INT-2026-11-10.md R-F.3, BOTH-SLOT-PACKAGING-2026-11-10.md).
 STEP2_INST_SHA256=20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203
 STEP2_INST_PATH=usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst
-# uc-pxx-step2 of uc-pxx-installer mainline-rc-5 f00a54c (ci/build-step2.sh,
-# built twice byte-identical; the USB receive of the payload, the finish
-# service, the RC-4 review fixes, the uc-pxx-xfer pin 42d764e0, GAP-1, and its
-# gate's one reviewed payload: the normal release payload 0.2.0-rc5, manifest
-# 31f19e79); it replaces a44632a6... of d7e2113,
+# uc-pxx-step2 of uc-pxx-installer (ci/build-step2.sh, built twice
+# byte-identical; its gate lists the normal release payloads of the same
+# release; the commit and the payloads are in the release record). Earlier
+# pins: 930a2d18... of mainline-rc-6 81a321f, fe4502b9... of mainline-rc-6, aace79f3... of mainline-rc-5,
+# a44632a6... of d7e2113,
 # ca1c1e67... of mainline-rc-4 6ac0b2c, b857680f... of 22eaf31, 524e89ba... of mainline-rc-3 3c397a7, 7049463f... of d754663, 13ea2508... of 6aab316, 3c2ba06f... of mainline-rc-2 d105ba2, b8c2a6d9... of c0d8f0b, 1cbb32ae... of mainline-rc be239e3,
 # f7cc1d33... of 1605579, a4e753cc... of 9627b27 and b7710fa3... of mainline-step2-rest b9b2e98); NOT yet reviewed for the safety rules: a new build needs a new pin here
 STEP2_BIN_SHA256=930a2d18b11847385e457767929753ef4eb65e8f5f2519642ff46b5421bdadb6
@@ -647,11 +652,17 @@ if [ -n "${UC_PXX_STEP2_BOOTCTL_INST:-}" ]; then
 	install -D -m 644 -o 0 -g 0 "$HERE/step2/conf.d/uc-pxx-step2" $R/etc/conf.d/uc-pxx-step2
 	mkdir -p $R/etc/runlevels/default
 	ln -sf /etc/init.d/uc-pxx-step2 $R/etc/runlevels/default/uc-pxx-step2
-	install -d -m 755 -o 0 -g 0 $R/etc/uc-pxx-step2
-	echo "supervised: a person runs each step of step 2 with a rule-9 GO (STEP-2 BUILD default)" > $R/etc/uc-pxx-step2/supervised
+	if [ "${UC_PXX_SSH_ACCESS:-}" = setup ]; then
+		STEP2_KIND="end user"
+		[ ! -e $R/etc/uc-pxx-step2 ] || { echo "ERROR: an end-user STEP-2 build has /etc/uc-pxx-step2"; exit 1; }
+	else
+		STEP2_KIND=supervised
+		install -d -m 755 -o 0 -g 0 $R/etc/uc-pxx-step2
+		echo "supervised: a person runs each step of step 2 with a rule-9 GO (STEP-2 BUILD default)" > $R/etc/uc-pxx-step2/supervised
+	fi
 	mkdir -p $R/etc/tsx
-	echo "STEP-2 BUILD: /$STEP2_INST_PATH (uc-pxx-bootctl-inst r2 $STEP2_INST_SHA256), /$STEP2_BIN_PATH (uc-pxx-step2 $STEP2_BIN_SHA256), the service uc-pxx-step2 (supervised). For no unit before its RULES line." > $R/etc/tsx/step2-bootctl-inst
-	log "STEP-2 BUILD (UC_PXX_STEP2_BOOTCTL_INST): r2 and uc-pxx-step2 in /usr/libexec/uc-pxx-step2, the service uc-pxx-step2 (supervised). For no unit before its RULES line"
+	echo "STEP-2 BUILD: /$STEP2_INST_PATH (uc-pxx-bootctl-inst r2 $STEP2_INST_SHA256), /$STEP2_BIN_PATH (uc-pxx-step2 $STEP2_BIN_SHA256), the service uc-pxx-step2 ($STEP2_KIND). For no unit before its RULES line." > $R/etc/tsx/step2-bootctl-inst
+	log "STEP-2 BUILD (UC_PXX_STEP2_BOOTCTL_INST): r2 and uc-pxx-step2 in /usr/libexec/uc-pxx-step2, the service uc-pxx-step2 ($STEP2_KIND). For no unit before its RULES line"
 else
 	[ -z "${UC_PXX_STEP2_BIN:-}" ] || { echo "ERROR: UC_PXX_STEP2_BIN needs UC_PXX_STEP2_BOOTCTL_INST (a STEP-2 build)"; exit 1; }
 fi
@@ -665,11 +676,20 @@ cp2=$(cd $R && find . -type f \( -size ${STEP2_INST_SIZE:-777976}c -o -size ${ST
 [ -z "$cp2" ] || { echo "ERROR: copies of uc-pxx-bootctl-inst or uc-pxx-step2 in the image: $cp2"; exit 1; }
 if [ -n "${UC_PXX_STEP2_BOOTCTL_INST:-}" ]; then
 	[ "$inst" = "$STEP2_INST_PATH " ] || { echo "ERROR: uc-pxx-bootctl-inst files in the image: '$inst' (only /$STEP2_INST_PATH is allowed)"; exit 1; }
-	[ "$s2" = "etc/conf.d/uc-pxx-step2 etc/init.d/uc-pxx-step2 etc/runlevels/default/uc-pxx-step2 etc/uc-pxx-step2 usr/libexec/uc-pxx-step2 $STEP2_BIN_PATH " ] ||
-		{ echo "ERROR: uc-pxx-step2 files in the image: '$s2'"; exit 1; }
-	# the two folders hold exactly their files (review r2: the program reads files there)
-	[ "$(cd $R && find etc/uc-pxx-step2 usr/libexec/uc-pxx-step2 | sort | tr '\n' ' ')" = "etc/uc-pxx-step2 etc/uc-pxx-step2/supervised usr/libexec/uc-pxx-step2 $STEP2_INST_PATH $STEP2_BIN_PATH " ] ||
-		{ echo "ERROR: other files in /etc/uc-pxx-step2 or /usr/libexec/uc-pxx-step2"; exit 1; }
+	if [ "$STEP2_KIND" = supervised ]; then
+		[ "$s2" = "etc/conf.d/uc-pxx-step2 etc/init.d/uc-pxx-step2 etc/runlevels/default/uc-pxx-step2 etc/uc-pxx-step2 usr/libexec/uc-pxx-step2 $STEP2_BIN_PATH " ] ||
+			{ echo "ERROR: uc-pxx-step2 files in the image: '$s2'"; exit 1; }
+		# the two folders hold exactly their files (review r2: the program reads files there)
+		[ "$(cd $R && find etc/uc-pxx-step2 usr/libexec/uc-pxx-step2 | sort | tr '\n' ' ')" = "etc/uc-pxx-step2 etc/uc-pxx-step2/supervised usr/libexec/uc-pxx-step2 $STEP2_INST_PATH $STEP2_BIN_PATH " ] ||
+			{ echo "ERROR: other files in /etc/uc-pxx-step2 or /usr/libexec/uc-pxx-step2"; exit 1; }
+	else
+		# the end-user STEP-2 build: no /etc/uc-pxx-step2 (no supervised marker)
+		[ "$s2" = "etc/conf.d/uc-pxx-step2 etc/init.d/uc-pxx-step2 etc/runlevels/default/uc-pxx-step2 usr/libexec/uc-pxx-step2 $STEP2_BIN_PATH " ] ||
+			{ echo "ERROR: uc-pxx-step2 files in the end-user image: '$s2'"; exit 1; }
+		[ "$(cd $R && find usr/libexec/uc-pxx-step2 | sort | tr '\n' ' ')" = "usr/libexec/uc-pxx-step2 $STEP2_INST_PATH $STEP2_BIN_PATH " ] &&
+			[ ! -e $R/etc/uc-pxx-step2 ] && [ ! -e $R/root/.ssh ] ||
+			{ echo "ERROR: the end-user STEP-2 image: other files in /usr/libexec/uc-pxx-step2, or /etc/uc-pxx-step2 or /root/.ssh present"; exit 1; }
+	fi
 else
 	[ -z "$inst" ] || { echo "ERROR: the image has uc-pxx-bootctl-inst ($inst): RULES.md allows it in no slot (a step-2 build needs UC_PXX_STEP2_BOOTCTL_INST)"; exit 1; }
 	[ ! -e $R/usr/libexec/uc-pxx-step2 ] || { echo "ERROR: the image has /usr/libexec/uc-pxx-step2 without UC_PXX_STEP2_BOOTCTL_INST"; exit 1; }

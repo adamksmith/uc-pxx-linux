@@ -435,6 +435,11 @@ STEP2_SET = {
     "etc/uc-pxx-step2/supervised": ("any", 0o644),
     "etc/runlevels/default/uc-pxx-step2": ("link:/etc/init.d/uc-pxx-step2", None),
 }
+# The END-USER STEP-2 build (mkrootfs.sh with UC_PXX_SSH_ACCESS=setup; owner
+# Q-T5 2026-11-12): the same set without /etc/uc-pxx-step2 (no supervised
+# marker), and no /root/.ssh in the image. Its marker line says "(end user)",
+# the supervised one's "(supervised)".
+STEP2_SET_EU = {k: v for k, v in STEP2_SET.items() if not k.startswith("etc/uc-pxx-step2")}
 # the two binaries by sha256 (a copy under another name is found by its bytes)
 STEP2_SHAS = {v: k for k, (v, m) in STEP2_SET.items() if re.fullmatch("[0-9a-f]{64}", v)}
 STEP2_SIZES = (777976, 4980860)
@@ -482,10 +487,13 @@ def cmd_both_slot(a):
     want = set(p for p, _ in BOTH_SLOT_ROOTFS) | {"usr/share/uc-pxx/boot-control.sha256", "etc/fstab",
                                                     "usr/sbin/uc-pxx-bootctl", "usr/sbin/uc-pxx-update-boot"}
     rootfs, rmode, bad, step2, usb = {}, {}, [], {}, {}
+    root_ssh = False
     with tarfile.open(a[0], "r:gz") as tf:
         for m in tf:
             n = re.sub(r"^(\./|/)+", "", m.name).rstrip("/")
             base = n.rsplit("/", 1)[-1]
+            if n == "root/.ssh" or n.startswith("root/.ssh/"):
+                root_ssh = True
             if n == "etc/tsx/dev-overlay":
                 bad.append("rootfs /%s present (a DEV-overlay build)" % n)
             if m.isreg() and m.size in STEP2_SIZES:
@@ -602,8 +610,19 @@ def cmd_both_slot(a):
     print("usb=yes (the USB set: uc-pxx-xfer, uc-pxx-usb, its conf, finish.json, the sshd rule)" if not [b for b in bad if b.startswith("usb")] else "usb=bad")
     if STEP2_MARKER in step2:
         got = {n: v for n, v in step2.items() if n != STEP2_MARKER}
-        check_set("step 2", got, STEP2_SET)
-        print("step2=yes (a STEP-2 build: r2, uc-pxx-step2 and the service checked)" if not [b for b in bad if b.startswith("step 2")] else "step2=bad")
+        # supervised (the marker /etc/uc-pxx-step2/supervised) or end user
+        # (no /etc/uc-pxx-step2, no /root/.ssh): the set and the marker line
+        # must agree
+        kind = "supervised" if any(n.startswith("etc/uc-pxx-step2") for n in got) else "end user"
+        check_set("step 2", got, STEP2_SET if kind == "supervised" else STEP2_SET_EU)
+        mk = step2[STEP2_MARKER]
+        line = (mk[4] or b"").decode("utf-8", "replace") if mk[0] == "file" else ""
+        want_bin = [v for k, (v, _) in STEP2_SET.items() if k.endswith("/uc-pxx-step2") and re.fullmatch("[0-9a-f]{64}", v)][0]
+        if ("(%s)" % kind) not in line or ("(supervised)" in line) != (kind == "supervised") or want_bin not in line:
+            bad.append("step 2: the marker /%s does not say (%s) and name uc-pxx-step2 %s: %r" % (STEP2_MARKER, kind, want_bin, line.strip()))
+        if kind == "end user" and root_ssh:
+            bad.append("step 2: an end-user STEP-2 build has /root/.ssh")
+        print(("step2=yes (a STEP-2 build, %s: r2, uc-pxx-step2 and the service checked)" % kind) if not [b for b in bad if b.startswith("step 2")] else "step2=bad")
     else:
         for n in sorted(step2):
             bad.append("rootfs /%s present without a step-2 build (uc-pxx-bootctl-inst or step 2)" % n)

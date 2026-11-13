@@ -231,8 +231,12 @@ step 2 (`uc-pxx-step2*`), is in the tree. The separate build option
 | `…/uc-pxx-step2` | the pinned `uc-pxx-step2` of uc-pxx-installer (`UC_PXX_STEP2_BIN`, `ci/build-step2.sh`; the pin is in `mkrootfs.sh`), 0700 |
 | `/etc/init.d/uc-pxx-step2` | the OpenRC service (`rootfs/step2/`), in the default runlevel: it starts `uc-pxx-step2 service` once per boot in the background, and a stop never ends it |
 | `/etc/conf.d/uc-pxx-step2` | `UC_PXX_STEP2_PAYLOAD=` empty: the service asks nothing |
-| `/etc/uc-pxx-step2/supervised` | the supervised marker: the service never writes or counts down by itself |
-| `/etc/tsx/step2-bootctl-inst` | says that this is a step-2 build |
+| `/etc/uc-pxx-step2/supervised` | the supervised marker (only a SUPERVISED step-2 build, `UC_PXX_SSH_ACCESS=keys`): the service never writes or counts down by itself |
+| `/etc/tsx/step2-bootctl-inst` | says that this is a step-2 build, and which: `(supervised)` or `(end user)` |
+
+An END-USER step-2 build (`UC_PXX_SSH_ACCESS=setup`: no ssh key) has no
+`/etc/uc-pxx-step2` at all: its step 2 may start by itself (the AUTO-STEP2
+countdown), and it installs only an end-user payload of its release.
 
 The data tool of step 2 is `/usr/sbin/uc-pxx-data-migrate` of uc-pxx-board
 (sha256 `9162c65d...`); the build stops without it. Such an image is for no

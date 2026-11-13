@@ -81,9 +81,13 @@
 #             The inputs record the sha256 (or none).
 # --step2-bin  with --step2-bootctl-inst only (required with it): the pinned
 #             uc-pxx-step2 (uc-pxx-installer ci/build-step2.sh). The rootfs
-#             gets it at /usr/libexec/uc-pxx-step2/uc-pxx-step2 (root, 0700),
-#             the OpenRC service uc-pxx-step2 and the supervised marker
-#             (rootfs/mkrootfs.sh). The inputs record STEP2_BIN_SHA256.
+#             gets it at /usr/libexec/uc-pxx-step2/uc-pxx-step2 (root, 0700)
+#             and the OpenRC service uc-pxx-step2 (rootfs/mkrootfs.sh). With
+#             SSH_ACCESS=keys (the maintainer's key) it is a SUPERVISED STEP-2
+#             build (the supervised marker /etc/uc-pxx-step2/supervised); with
+#             SSH_ACCESS=setup an END-USER STEP-2 build (no /etc/uc-pxx-step2:
+#             its step 2 may start by itself). The inputs record
+#             STEP2_BIN_SHA256.
 # --xfer-bin  the pinned uc-pxx-xfer (uc-pxx-installer ci/build-xfer.sh): the
 #             USB set of a both-slot build (rootfs/mkrootfs.sh UC_PXX_XFER_BIN,
 #             docs/usb.md): the WebUSB interface (uc-pxx-usb), its conf (the
@@ -517,7 +521,7 @@ TOTAL=$((TS + RS + MS))
 	if [ "${GOT[STEP2_BOOTCTL_INST_SHA256]}" = none ]; then
 		echo "uc-pxx-bootctl-inst: not in the rootfs (the default build)"
 	else
-		echo "uc-pxx-bootctl-inst: r2 ${GOT[STEP2_BOOTCTL_INST_SHA256]} and uc-pxx-step2 ${GOT[STEP2_BIN_SHA256]} at /usr/libexec/uc-pxx-step2, the service uc-pxx-step2 (supervised) (a STEP-2 build: for no unit before its RULES line; the installer gate refuses it)"
+		echo "uc-pxx-bootctl-inst: r2 ${GOT[STEP2_BOOTCTL_INST_SHA256]} and uc-pxx-step2 ${GOT[STEP2_BIN_SHA256]} at /usr/libexec/uc-pxx-step2, the service uc-pxx-step2 ($([ "${GOT[SSH_ACCESS]}" = setup ] && echo "end user: no supervised marker, step 2 may start by itself (AUTO-STEP2)" || echo "supervised: /etc/uc-pxx-step2/supervised")) (a STEP-2 build: for no unit before its RULES line)"
 	fi
 	if [ "${GOT[XFER_BIN_SHA256]}" = none ]; then echo "the USB set: not in the rootfs"
 	else echo "the USB set: uc-pxx-xfer ${GOT[XFER_BIN_SHA256]}, the service uc-pxx-usb (the USB network off by default), /usr/share/uc-pxx-usb/finish.json"; fi
