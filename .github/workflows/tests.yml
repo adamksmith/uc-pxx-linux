@@ -122,6 +122,10 @@ jobs:
         run: sh rootfs/tests/test-esphome-plugin.sh
         env:
           TSX_COMMON: ${{ github.workspace }}/tsx-linux-common
+      - name: rootfs/tests/test-ssh-plugin.sh - the SSH plugin of the end-user payload with tsx-config of tsx-linux-common
+        run: busybox sh rootfs/tests/test-ssh-plugin.sh
+        env:
+          TSX_COMMON: ${{ github.workspace }}/tsx-linux-common
       - name: packages/uc-pxx-leds/tests/test-plugin.sh - the LED plugin with a stand-in daemon and fake LEDs
         run: sh packages/uc-pxx-leds/tests/test-plugin.sh
         env:

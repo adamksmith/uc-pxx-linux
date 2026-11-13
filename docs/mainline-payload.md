@@ -175,8 +175,36 @@ tools/mainline-payload/build.sh build --snapshot SNAP --resource RESOURCE --vbme
   (`DEV_APK_KEY_SHA256`, `none` without it). Never publish such a payload.
 - `--require-both-slot` stops the build unless the payload is a both-slot
   build of the commit (below).
+- `--autoupdate-mode manual|auto` (default `manual`) sets the tsx-autoupdate
+  mode of the slot. `manual` writes `MODE=manual` and `AUTO_RESTART=on` into
+  `/etc/tsx/autoupdate.conf`: the slot never installs by itself, and an
+  install from Home Assistant (or `tsx-autoupdate now`) restarts when it needs
+  one. `UPDATE_MODE` and `UPDATE_AUTO_RESTART` of panel.conf still win. The
+  inputs record it (`AUTOUPDATE_MODE`).
+- `--ssh-access keys|setup` sets how root gets in over ssh (below, "SSH
+  access"). The default is `keys` with `--authorized-keys`, else `setup`. The
+  inputs record it (`SSH_ACCESS`).
 
-The inputs format is `uc-pxx-mainline-payload-inputs-4`.
+The inputs format is `uc-pxx-mainline-payload-inputs-7`.
+
+### SSH access
+
+A payload comes in one of two forms:
+
+- `keys`, the maintainer build: the keys of `--authorized-keys` are in
+  `/root/.ssh/authorized_keys`, and sshd is in the default runlevel. Such a
+  payload is for the units of the key owner only.
+- `setup`, the end-user build: no ssh key, the root password locked, and sshd
+  is not in the default runlevel. The person adds an SSH public key in the
+  "Access" part of the setup page (panel.conf `SSH_AUTHORIZED_KEY`).
+  tsx-config checks the format of the key, and `tsx-config apply` adds it to
+  `/root/.ssh/authorized_keys`. The tsx-config plugin
+  `/usr/local/lib/tsx/config.d/uc_pxx_ssh.sh` (`rootfs/ssh/uc_pxx_ssh.sh`)
+  then adds sshd to the default runlevel and starts it. The panel.conf key
+  `SSH_SERVER=off` keeps sshd off, also with a key. The plugin changes only the
+  runlevel link of sshd on the root file system and the sshd service. It
+  writes nothing to the boot area of the eMMC. The test is
+  `rootfs/tests/test-ssh-plugin.sh`.
 
 ### Both-slot build
 

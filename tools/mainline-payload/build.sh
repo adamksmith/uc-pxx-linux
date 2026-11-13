@@ -12,6 +12,7 @@
 #                                         [--headroom MIB] [--apk-url URL] [--keep-work]
 #                                         [--step2-bootctl-inst FILE --step2-bin FILE] [--xfer-bin FILE]
 #                                         [--dev-apk-key NAME.rsa.pub] [--require-both-slot]
+#                                         [--autoupdate-mode manual|auto] [--ssh-access keys|setup]
 #
 # prime   Makes the input snapshot DIR (network): DIR/tsx is the published apk
 #         tree of tsx-aports (rootfs/fetch-apk-tree.sh, --channel, default the
@@ -119,6 +120,14 @@
 #   IMG_HEADROOM_MB     free space in rootfs.ext4 (mkrootfs.sh; --headroom)
 #   TSX_APK_URL         the apk repository that the panel lists
 #   AUTHORIZED_KEYS_SHA256  none, or the sha256 of --authorized-keys
+#   AUTOUPDATE_MODE     manual (the default: the slot never installs by itself;
+#                       /etc/tsx/autoupdate.conf MODE=manual, AUTO_RESTART=on)
+#                       or auto (--autoupdate-mode; the tsx-autoupdate defaults)
+#   SSH_ACCESS          keys (the maintainer build: --authorized-keys, sshd on)
+#                       or setup (the end-user build: no key, sshd off until the
+#                       setup page gives root an SSH key; docs/mainline-payload.md
+#                       "SSH access"). The default: keys with --authorized-keys,
+#                       else setup
 #   STEP2_BOOTCTL_INST_SHA256  none, or the sha256 of --step2-bootctl-inst
 #   STEP2_BIN_SHA256    none, or the sha256 of --step2-bin
 #   XFER_BIN_SHA256     none, or the sha256 of --xfer-bin
@@ -145,12 +154,12 @@ MKIMAGE_SHA=98ef579ce1f152463c8902c53c2f2f8edfbdfd6b8a0d40d650c59844d893703f
 ALPINE_REF_DEFAULT=alpine@sha256:e311ae748be7f56ae5cba304bc488f0786df68ee507513f654a5cc8597cffb42
 ALPINE=v3.24
 UPSTREAM=${UPSTREAM_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
-FMT=uc-pxx-mainline-payload-inputs-6
+FMT=uc-pxx-mainline-payload-inputs-7
 # uc-pxx-bootctl-inst r2 (RULES.md: the installer RAM image only; Q-S8: a step-2 rootfs)
 STEP2_INST_SHA=20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203
 KEYS="FORMAT VERSION SOURCE_DATE_EPOCH UC_PXX_LINUX_COMMIT KERNEL_REV MKIMAGE_SHA256 SHIM_SHA256
 RESOURCE_SHA256 VBMETA_SHA256 ALPINE_IMAGE ALPINE_IMAGE_ID ALPINE_SNAPSHOT TSX_SNAPSHOT PIP_SNAPSHOT PROFILE
-ROOTFS_UUID IMG_HEADROOM_MB TSX_APK_URL AUTHORIZED_KEYS_SHA256 STEP2_BOOTCTL_INST_SHA256 STEP2_BIN_SHA256 XFER_BIN_SHA256 DEV_APK_KEY_SHA256 CROSS_CC_VERSION CROSS_LD_VERSION
+ROOTFS_UUID IMG_HEADROOM_MB TSX_APK_URL AUTHORIZED_KEYS_SHA256 AUTOUPDATE_MODE SSH_ACCESS STEP2_BOOTCTL_INST_SHA256 STEP2_BIN_SHA256 XFER_BIN_SHA256 DEV_APK_KEY_SHA256 CROSS_CC_VERSION CROSS_LD_VERSION
 DTC_VERSION MKBOOTIMG_SHA256"
 die() { echo "mainline-payload: $*" >&2; exit 1; }
 usage() { sed -n '9,14p' "$0" >&2; exit 2; }
@@ -159,7 +168,7 @@ step() { echo "== $* ($(( $(date +%s) - T0 )) s)"; }
 sha() { sha256sum < "$1" | cut -c1-64; }
 
 CMD=${1:-}; [ $# -gt 0 ] && shift
-SNAP= RES= VBM= OUT= INPUTS= KEYSFILE= S2FILE= S2BFILE= XFFILE= DKFILE= REQBS=0 HEADROOM0= KEEP=0 CHANNEL=https://tsx-aports.unexceptional.net APKURL0=https://tsx-aports.unexceptional.net
+SNAP= RES= VBM= OUT= INPUTS= KEYSFILE= S2FILE= S2BFILE= XFFILE= DKFILE= REQBS=0 HEADROOM0= KEEP=0 AUMODE0= SSHACC0= CHANNEL=https://tsx-aports.unexceptional.net APKURL0=https://tsx-aports.unexceptional.net
 while [ $# -gt 0 ]; do
 	case $1 in
 	--snapshot) SNAP=${2:?}; shift;;
@@ -174,6 +183,8 @@ while [ $# -gt 0 ]; do
 	--xfer-bin) XFFILE=${2:?}; shift;;
 	--dev-apk-key) DKFILE=${2:?}; shift;;
 	--require-both-slot) REQBS=1;;
+	--autoupdate-mode) AUMODE0=${2:?}; shift;;
+	--ssh-access) SSHACC0=${2:?}; shift;;
 	--channel) CHANNEL=${2:?}; shift;;
 	--apk-url) APKURL0=${2:?}; shift;;
 	--keep-work) KEEP=1;;
@@ -226,10 +237,12 @@ rootfs_build() {
 		-u KVER -u IMG_MB -u UC_PXX_SPLASH_SIZES -u TSX_DEV_RESCUE_KEYS -u TSX_DEV_RESCUE_HASH \
 		-u UC_PXX_APK_MIRROR -u UC_PXX_MIRROR_URL -u UC_PXX_DEV_OVERLAY -u RTL8363_INIT -u UC_PXX_BOOTCTL -u UC_PXX_REBOOT \
 		-u UC_PXX_STEP2_BOOTCTL_INST -u UC_PXX_STEP2_BIN -u UC_PXX_XFER_BIN -u UC_PXX_DEV_APK_KEY \
+		-u UC_PXX_AUTOUPDATE_MODE -u UC_PXX_SSH_ACCESS \
 		ALPINE=$ALPINE IMAGE="$IMAGE" PROFILE="$PROFILE" TSX_APK_LOCAL="$SNAP/tsx" \
 		TSX_APK_URL="$APKURL" TSX_BUILD_ID="$VERSION" SOURCE_DATE_EPOCH="$SDE" ROOTFS_UUID="$UUID" \
 		IMG_HEADROOM_MB="$HEADROOM" UC_PXX_PIP_CACHE="$pip" UC_PXX_DOCKER_NET="$net" \
-		AUTHORIZED_KEYS="$AKEYS" ${S2INST:+UC_PXX_STEP2_BOOTCTL_INST="$S2INST"} ${S2BIN:+UC_PXX_STEP2_BIN="$S2BIN"} ${XFBIN:+UC_PXX_XFER_BIN="$XFBIN"} \
+		AUTHORIZED_KEYS="$AKEYS" UC_PXX_AUTOUPDATE_MODE="${GOT[AUTOUPDATE_MODE]}" UC_PXX_SSH_ACCESS="${GOT[SSH_ACCESS]}" \
+		${S2INST:+UC_PXX_STEP2_BOOTCTL_INST="$S2INST"} ${S2BIN:+UC_PXX_STEP2_BIN="$S2BIN"} ${XFBIN:+UC_PXX_XFER_BIN="$XFBIN"} \
 		${DEVKEY:+UC_PXX_DEV_APK_KEY="$DEVKEY"} "$@" "$src/rootfs/build-rootfs.sh" all
 }
 
@@ -295,6 +308,18 @@ if [ -n "$KEYSFILE" ]; then
 else
 	pin AUTHORIZED_KEYS_SHA256 none
 fi
+# the tsx-autoupdate mode (RC-5 release review MINOR-2: manual by default)
+if [ -n "$INPUTS" ] && [ -n "$AUMODE0" ] && [ "$AUMODE0" != "${IN[AUTOUPDATE_MODE]}" ]; then die "--autoupdate-mode differs from AUTOUPDATE_MODE of the inputs file"; fi
+choose AUTOUPDATE_MODE "${AUMODE0:-manual}"
+case ${GOT[AUTOUPDATE_MODE]} in manual|auto) ;; *) die "AUTOUPDATE_MODE '${GOT[AUTOUPDATE_MODE]}' is not manual or auto";; esac
+# the SSH access: keys (the maintainer build) or setup (the end-user build)
+if [ -n "$INPUTS" ] && [ -n "$SSHACC0" ] && [ "$SSHACC0" != "${IN[SSH_ACCESS]}" ]; then die "--ssh-access differs from SSH_ACCESS of the inputs file"; fi
+choose SSH_ACCESS "${SSHACC0:-$([ -n "$KEYSFILE" ] && echo keys || echo setup)}"
+case ${GOT[SSH_ACCESS]} in
+keys) [ -n "$KEYSFILE" ] || die "SSH_ACCESS=keys needs --authorized-keys";;
+setup) [ -z "$KEYSFILE" ] || die "SSH_ACCESS=setup (the end-user build) takes no --authorized-keys";;
+*) die "SSH_ACCESS '${GOT[SSH_ACCESS]}' is not keys or setup";;
+esac
 S2INST=
 if [ -n "$S2FILE" ]; then
 	[ -f "$S2FILE" ] || die "--step2-bootctl-inst $S2FILE: no such file"
@@ -483,10 +508,12 @@ TOTAL=$((TS + RS + MS))
 	echo "rootfs.ext4 headroom: IMG_HEADROOM_MB=$HEADROOM (mkrootfs.sh adds 5 % of the content)"
 	if [ "${GOT[AUTHORIZED_KEYS_SHA256]}" = none ]; then
 		echo "root login: no ssh key, the root password locked (no login until the panel gets a key)"
+		[ "${GOT[SSH_ACCESS]}" != setup ] || echo "SSH access: setup (the end-user build): sshd is off until the setup page gives root an SSH key (config.d/uc_pxx_ssh.sh)"
 	else
 		echo "root login: ssh keys only (authorized_keys sha256 ${GOT[AUTHORIZED_KEYS_SHA256]}), the root password locked;" \
 			"FOR THE UNITS OF THE KEY OWNER ONLY: never publish this payload for other users"
 	fi
+	echo "tsx-autoupdate: AUTOUPDATE_MODE=${GOT[AUTOUPDATE_MODE]}$([ "${GOT[AUTOUPDATE_MODE]}" = manual ] && echo " (/etc/tsx/autoupdate.conf MODE=manual, AUTO_RESTART=on: never installs by itself)")"
 	if [ "${GOT[STEP2_BOOTCTL_INST_SHA256]}" = none ]; then
 		echo "uc-pxx-bootctl-inst: not in the rootfs (the default build)"
 	else

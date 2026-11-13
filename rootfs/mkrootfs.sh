@@ -39,6 +39,16 @@
 #   PROFILE     console, kiosk or ha (default ha). It decides what the image
 #               holds. profiles/*.list, profile.sh and docs/rootfs.md
 #               "Profiles" say what each profile has.
+#   UC_PXX_AUTOUPDATE_MODE  optional: manual or auto. manual writes MODE=manual
+#               and AUTO_RESTART=on into /etc/tsx/autoupdate.conf (a mainline
+#               payload: the slot never installs by itself). Empty or auto: the
+#               defaults of tsx-autoupdate (MODE=auto)
+#   UC_PXX_SSH_ACCESS  optional: keys or setup. keys: the image has the keys of
+#               AUTHORIZED_KEYS (required then) and sshd in the default
+#               runlevel. setup (the end-user build; no AUTHORIZED_KEYS): sshd is
+#               not in the default runlevel, and the tsx-config plugin
+#               rootfs/ssh/uc_pxx_ssh.sh turns it on when the setup page gives
+#               root an SSH key. Empty: sshd as the profile says
 #   UC_PXX_XFER_BIN  the pinned uc-pxx-xfer (uc-pxx-installer ci/build-xfer.sh,
 #               XFER_SHA256 below): the USB set of a both-slot build (the
 #               WebUSB interface of every mainline build, docs/usb.md). Without
@@ -189,6 +199,27 @@ if [ -n "$DEVKEY" ]; then
 	else printf '%s\n' '# DEV PACKAGES (mkrootfs.sh UC_PXX_DEV_APK_KEY): never install by itself' 'MODE=manual' >> "$A"; fi
 	log "TEST BUILD: tsx-autoupdate MODE=manual in /etc/tsx/autoupdate.conf"
 fi
+# The tsx-autoupdate mode of a mainline payload (UC_PXX_AUTOUPDATE_MODE; the
+# RC-5 release review MINOR-2): manual = the slot never installs by itself. A
+# person installs from Home Assistant or with `tsx-autoupdate now`, and such an
+# install restarts when it needs one (AUTO_RESTART=on, only after the board
+# step's status 0). UPDATE_MODE and UPDATE_AUTO_RESTART of panel.conf (the setup
+# page, Home Assistant) still win over this file.
+case "${UC_PXX_AUTOUPDATE_MODE:-}" in
+''|auto) ;;
+manual)
+	A=$R/etc/tsx/autoupdate.conf
+	mkdir -p $R/etc/tsx
+	[ ! -L "$A" ] || { echo "ERROR: $A is a link"; exit 1; }
+	if [ -f "$A" ]; then sed -i -e '/^MODE=/d' -e '/^AUTO_RESTART=/d' "$A"; fi
+	printf '%s\n' '# the default of this mainline build (tools/mainline-payload/build.sh AUTOUPDATE_MODE=manual):' \
+		'# never install by itself; an install from Home Assistant restarts when it needs one' 'MODE=manual' 'AUTO_RESTART=on' >> "$A"
+	chmod 644 "$A"
+	[ "$(grep -c '^MODE=' "$A")" = 1 ] && grep -qx 'MODE=manual' "$A" && grep -qx 'AUTO_RESTART=on' "$A" ||
+		{ echo "ERROR: /etc/tsx/autoupdate.conf does not say MODE=manual and AUTO_RESTART=on once"; exit 1; }
+	log "tsx-autoupdate: MODE=manual, AUTO_RESTART=on in /etc/tsx/autoupdate.conf (UC_PXX_AUTOUPDATE_MODE)";;
+*) echo "ERROR: UC_PXX_AUTOUPDATE_MODE='$UC_PXX_AUTOUPDATE_MODE' is not manual or auto"; exit 1;;
+esac
 # the panel's list: this project's two repositories FIRST (common + uc-pxx,
 # never another platform's). The block, marker line included, is what
 # tsx-config apply writes.
@@ -471,6 +502,34 @@ else
 	log "check the kernel package against kernel/KERNEL_REV.lts"
 	sh "$HERE/check-kernel-pins.sh" "$R" "$TOP/kernel" || { echo "ERROR: the kernel package in $TSX_APK_LOCAL does not match the kernel pin"; exit 1; }
 fi
+
+# The SSH access of a mainline payload (UC_PXX_SSH_ACCESS; owner 2026-11-12,
+# docs/mainline-payload.md "SSH access"):
+#   keys   the maintainer build: AUTHORIZED_KEYS is required, sshd stays in the
+#          default runlevel (as before)
+#   setup  the end-user build: no AUTHORIZED_KEYS (no /root/.ssh), sshd is not
+#          in the default runlevel, and the tsx-config plugin
+#          /usr/local/lib/tsx/config.d/uc_pxx_ssh.sh (root, 0644, the folder
+#          0755) turns sshd on when the setup page gives root an SSH key
+UC_PXX_SSH_PLUGIN=usr/local/lib/tsx/config.d/uc_pxx_ssh.sh
+case "${UC_PXX_SSH_ACCESS:-}" in
+'') [ ! -e "$R/$UC_PXX_SSH_PLUGIN" ] || { echo "ERROR: the image has $UC_PXX_SSH_PLUGIN without UC_PXX_SSH_ACCESS=setup"; exit 1; };;
+keys)
+	[ -s $R/root/.ssh/authorized_keys ] || { echo "ERROR: UC_PXX_SSH_ACCESS=keys needs AUTHORIZED_KEYS"; exit 1; }
+	[ -L $R/etc/runlevels/default/sshd ] || { echo "ERROR: UC_PXX_SSH_ACCESS=keys: sshd is not in the default runlevel"; exit 1; }
+	[ ! -e "$R/$UC_PXX_SSH_PLUGIN" ] || { echo "ERROR: UC_PXX_SSH_ACCESS=keys: the image has $UC_PXX_SSH_PLUGIN"; exit 1; }
+	log "SSH access: keys (the keys of AUTHORIZED_KEYS, sshd in the default runlevel)";;
+setup)
+	[ ! -e $R/root/.ssh/authorized_keys ] || { echo "ERROR: UC_PXX_SSH_ACCESS=setup: the image has /root/.ssh/authorized_keys"; exit 1; }
+	[ -L $R/etc/runlevels/default/sshd ] || { echo "ERROR: UC_PXX_SSH_ACCESS=setup: the profile has no sshd in the default runlevel"; exit 1; }
+	rm -f $R/etc/runlevels/default/sshd
+	[ -e $R/etc/init.d/sshd ] || { echo "ERROR: UC_PXX_SSH_ACCESS=setup: no /etc/init.d/sshd"; exit 1; }
+	install -d -m 755 -o 0 -g 0 $R/usr/local/lib/tsx/config.d
+	install -m 644 -o 0 -g 0 "$HERE/ssh/uc_pxx_ssh.sh" "$R/$UC_PXX_SSH_PLUGIN"
+	[ -z "$(find $R/etc/runlevels -name sshd)" ] || { echo "ERROR: UC_PXX_SSH_ACCESS=setup: sshd is still in a runlevel"; exit 1; }
+	log "SSH access: setup (no key, sshd off until the setup page gives root an SSH key: $UC_PXX_SSH_PLUGIN)";;
+*) echo "ERROR: UC_PXX_SSH_ACCESS='$UC_PXX_SSH_ACCESS' is not keys or setup"; exit 1;;
+esac
 
 # The USB set (uc-pxx-installer mainline-rc-4; owner decisions 2026-11-11,
 # docs/usb.md): every both-slot build (normal and STEP-2) brings up the WebUSB

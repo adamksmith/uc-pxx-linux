@@ -33,6 +33,8 @@
 #               "initramfs" puts it into the rescue. The DEV mode puts it into
 #               the rootfs. The binary links with the Realtek SDK and is not
 #               part of this repository.
+#   UC_PXX_AUTOUPDATE_MODE, UC_PXX_SSH_ACCESS  the tsx-autoupdate mode and the
+#               SSH access of a mainline payload (see mkrootfs.sh)
 #   UC_PXX_XFER_BIN  the pinned uc-pxx-xfer: the USB set of a both-slot build
 #               (mkrootfs.sh, docs/usb.md)
 #   UC_PXX_STEP2_BOOTCTL_INST  optional, off by default (a separate build
@@ -335,6 +337,10 @@ rootfs() {
 	fi
 	# the USB set of a both-slot build (mkrootfs.sh UC_PXX_XFER_BIN)
 	in_file UC_PXX_XFER_BIN "${UC_PXX_XFER_BIN:-}"
+	# the tsx-autoupdate mode and the SSH access of a mainline payload (mkrootfs.sh)
+	case "${UC_PXX_AUTOUPDATE_MODE:-}" in ''|manual|auto) ;; *) echo "UC_PXX_AUTOUPDATE_MODE='$UC_PXX_AUTOUPDATE_MODE' is not manual or auto"; exit 1;; esac
+	case "${UC_PXX_SSH_ACCESS:-}" in ''|keys|setup) ;; *) echo "UC_PXX_SSH_ACCESS='$UC_PXX_SSH_ACCESS' is not keys or setup"; exit 1;; esac
+	dargs+=(-e UC_PXX_AUTOUPDATE_MODE="${UC_PXX_AUTOUPDATE_MODE:-}" -e UC_PXX_SSH_ACCESS="${UC_PXX_SSH_ACCESS:-}")
 	if [ -n "${UC_PXX_DEV_APK_KEY:-}" ]; then
 		[ -f "$UC_PXX_DEV_APK_KEY" ] || { echo "UC_PXX_DEV_APK_KEY=$UC_PXX_DEV_APK_KEY: no such file"; exit 1; }
 		case ${UC_PXX_DEV_APK_KEY##*/} in
