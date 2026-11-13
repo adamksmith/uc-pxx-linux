@@ -626,7 +626,7 @@ STEP2_INST_PATH=usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst
 # 31f19e79); it replaces a44632a6... of d7e2113,
 # ca1c1e67... of mainline-rc-4 6ac0b2c, b857680f... of 22eaf31, 524e89ba... of mainline-rc-3 3c397a7, 7049463f... of d754663, 13ea2508... of 6aab316, 3c2ba06f... of mainline-rc-2 d105ba2, b8c2a6d9... of c0d8f0b, 1cbb32ae... of mainline-rc be239e3,
 # f7cc1d33... of 1605579, a4e753cc... of 9627b27 and b7710fa3... of mainline-step2-rest b9b2e98); NOT yet reviewed for the safety rules: a new build needs a new pin here
-STEP2_BIN_SHA256=fe4502b9cae25dc0811b35e910635a9789f44c3a5a8cf0c99f0d6d0b3c93dd5a
+STEP2_BIN_SHA256=930a2d18b11847385e457767929753ef4eb65e8f5f2519642ff46b5421bdadb6
 STEP2_BIN_PATH=usr/libexec/uc-pxx-step2/uc-pxx-step2
 STEP2_DATA_SHA256=9162c65df08ac5577e38a2fe124d8cb1434b9b2bcfe787d6fba76055b8006791
 STEP2_DATA_PATH=usr/sbin/uc-pxx-data-migrate
@@ -659,7 +659,7 @@ inst=$(cd $R && find . -name 'uc-pxx-bootctl-inst*' | sed 's#^\./##' | sort | tr
 s2=$(cd $R && find . -name 'uc-pxx-step2*' | sed 's#^\./##' | sort | tr '\n' ' ')
 # a copy of r2 or uc-pxx-step2 under another name, by its bytes (review r2):
 # only files of their sizes are hashed
-cp2=$(cd $R && find . -type f \( -size ${STEP2_INST_SIZE:-777976}c -o -size ${STEP2_BIN_SIZE:-4980896}c \) -exec sha256sum {} + |
+cp2=$(cd $R && find . -type f \( -size ${STEP2_INST_SIZE:-777976}c -o -size ${STEP2_BIN_SIZE:-4980860}c \) -exec sha256sum {} + |
 	awk -v a="$STEP2_INST_SHA256" -v b="$STEP2_BIN_SHA256" -v pa="./$STEP2_INST_PATH" -v pb="./$STEP2_BIN_PATH" \
 		'($1 == a && $2 != pa) || ($1 == b && $2 != pb) { print $2 }' | tr '\n' ' ')
 [ -z "$cp2" ] || { echo "ERROR: copies of uc-pxx-bootctl-inst or uc-pxx-step2 in the image: $cp2"; exit 1; }
