@@ -89,6 +89,10 @@ mksrc() {
 	rm -rf "$T/src"; mkdir -p "$T/src"; R=$T/src
 	mkdir -p "$R/data/tsx" "$R/var/lib/kiosk/profile" "$R/var/log" "$R/var/lib/tsx" "$R/root/.ssh" "$R/home/u" "$R/lib/firmware/brcm" "$R/etc"
 	echo "UPDATE_MODE=manual" > "$R/data/tsx/panel.conf"
+	# mainline-rc-8: the installer's seed of the person's ssh key (uc-pxx-inst keywrite): panel.conf 0600 with the key,
+	# the setup stamp setup-v2 0644, the folder 0700; the migrate must carry them to the new /data as they are
+	echo 'SSH_AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBbrhXWbO19v2SgtcPAMqpGOt8V5hUqtgQyUCJxvGtTp test-ed25519"' >> "$R/data/tsx/panel.conf"
+	echo 2 > "$R/data/tsx/setup-v2"; chmod 700 "$R/data/tsx"; chmod 600 "$R/data/tsx/panel.conf"; chmod 644 "$R/data/tsx/setup-v2"
 	echo "profile" > "$R/var/lib/kiosk/profile/Prefs"; ln -s Prefs "$R/var/lib/kiosk/profile/link"
 	echo "log line" > "$R/var/log/messages"; echo "state" > "$R/var/lib/tsx/state"
 	echo "ssh-ed25519 AAAA k@x" > "$R/root/.ssh/authorized_keys"; chmod 700 "$R/root/.ssh"; chmod 600 "$R/root/.ssh/authorized_keys"
@@ -223,7 +227,10 @@ eq "$(lab)" "tsxdata" "blkid: the label tsxdata"
 eq "$(tdig "$T/src")" "$SRC0" "the running system's data is unchanged (nothing deleted or changed)"
 mnt
 [ ! -e "$T/m/junk" ] && [ ! -e "$T/m/var/log/stale" ] && ok "what the cut run left is gone" || bad "stale files of the cut run stayed"
-eq "$(cat "$T/m/tsx/panel.conf")" "UPDATE_MODE=manual" "/data/tsx/panel.conf copied"
+eq "$(head -n 1 "$T/m/tsx/panel.conf")" "UPDATE_MODE=manual" "/data/tsx/panel.conf copied"
+eq "$(cmp "$T/src/data/tsx/panel.conf" "$T/m/tsx/panel.conf" && echo same)" "same" "the seeded panel.conf (SSH_AUTHORIZED_KEY) copied byte for byte"
+eq "$(stat -c '%a %u:%g' "$T/m/tsx" "$T/m/tsx/panel.conf" "$T/m/tsx/setup-v2" | tr '\n' ' ')" "700 0:0 600 0:0 644 0:0 " "the seed's modes and owners kept (folder 0700, panel.conf 0600, setup-v2 0644, root)"
+eq "$(cat "$T/m/tsx/setup-v2")" "2" "the setup stamp setup-v2 copied"
 for d in var/lib/kiosk var/log var/lib/tsx root home; do
 	[ -e "$T/m/$d/.tsx-moved" ] && ok "/$d: the marker of tsx-data" || bad "/$d: no marker"
 	[ "$(cd "$T/m/$d" && find . ! -name .tsx-moved \( -type f -o -type l \) | sort | while read -r f; do [ -L "$f" ] && readlink "$f" || sha256sum < "$f"; done | sha256sum)" = \
