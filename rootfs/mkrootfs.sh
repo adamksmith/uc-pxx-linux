@@ -327,6 +327,16 @@ if [ -e $R/etc/init.d/uc-pxx-lvm ] && ! grep -qx '# uc-pxx-data-mount: 1' $R/etc
 fi
 # (end of the fstab step)
 mkdir -p $R/data   # the data partition's mount point (fstab, tsx-data)
+# The state folder of the tsx tools (tsx-linux-common): tsx-autoupdate,
+# tsx-config, the panel app. No package ships it: tsx-data makes it (and binds
+# /data/var/lib/tsx onto it) only in a boot that has /data. A boot without
+# /data (a slot that the RAM installer wrote, before step 2: uc-pxx-lvm leaves
+# /data a folder of the root file system) needs it on the root file system:
+# the start of tsx-autoupdate (`checkpath -d /var/lib/tsx/autoupdate`) makes
+# no parent folder, and without its state folder step 2 refuses (its hold
+# check: U2-5, 2026-11-14). With /data, tsx-data sees the same empty folder
+# that its own `mkdir -p` made before. Root, 0755, empty.
+mkdir -p $R/var/lib/tsx && chown 0:0 $R/var/lib/tsx && chmod 0755 $R/var/lib/tsx
 # the build's repository URL: tsx-config apply falls back to it when
 # panel.conf has no APK_URL
 printf '%s\n' "$TSX_APK_URL" > $R/etc/tsx/apk-url.default
@@ -769,6 +779,9 @@ if [ -n "$SDE" ]; then
 	fi
 	rm -f /build/sde.ref
 fi
+# the state folder of the tsx tools (above): root, 0755, a folder, empty
+[ -d $R/var/lib/tsx ] && [ ! -L $R/var/lib/tsx ] && [ "$(stat -c '%u:%g %a' $R/var/lib/tsx)" = "0:0 755" ] &&
+	[ -z "$(ls -A $R/var/lib/tsx)" ] || { echo "ERROR: /var/lib/tsx is not an empty folder root:root 0755 in the image"; exit 1; }
 log "tarball"
 tar -C $R --sort=name --numeric-owner -cpf - . | gzip -6 -n > "$OUT/rootfs.tar.gz"
 # The ext4 image is compact (the content plus headroom). The initramfs grows

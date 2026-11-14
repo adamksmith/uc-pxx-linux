@@ -185,6 +185,15 @@ A release that ships this fstab ships the service and the initramfs of the
 same commit: an older `uc-pxx-lvm` only activates the volume group and does not
 mount it.
 
+Without a tsx data file system (a slot that the RAM installer wrote, before
+step 2), `/data` is a folder of the root file system and `tsx-data` does
+nothing. The image therefore has `/var/lib/tsx` (root, 0755, empty): the start
+of `tsx-autoupdate` makes its state folder `/var/lib/tsx/autoupdate` in it
+(`checkpath` makes no parent folder), and step 2 refuses while that folder is
+missing. With `/data`, `tsx-data` moves it and binds `/data/var/lib/tsx` onto
+it, as it did with the folder that its own `mkdir -p` made before. The build
+fails if the folder is missing or not that.
+
 ### The data tools of step 2
 
 Step 2 of the mainline install (MAINLINE-STEP2-DESIGN §6) makes `/data` on
