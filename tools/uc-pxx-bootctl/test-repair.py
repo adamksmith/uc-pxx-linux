@@ -3,6 +3,7 @@
 the other commands behave exactly as in the old binary.
 
 Usage: test-repair.py <binary> [--old <old binary>] [--full] [--sample N]
+  (r3: OLD_HAS_SWITCH=1 with --old r2 20aa6bc5 also compares repair and switch without --untested)
   --old    differential: every non-repair command must give the same exit code, stdout and sector as the
            old binary (the reviewed 5d83215b), on every case.
   --full   all 65,536 slot-field combinations (priority 0..15 x tries 0..7 x successful 0..1 x reserved 0..1
@@ -140,10 +141,16 @@ def check_repair(name, s):
     check_switch(name, s)
 
 
-def switched(cur, to):
-    """The model of switch --to T: None = refused, "same" = nothing to do, else the new sector."""
+def trying(s):
+    return s[0] >= 1 and s[1] >= 1 and s[2] == 0
+
+
+def switched(cur, to, untested=False):
+    """The model of switch --to T [--untested]: None = refused, "same" = nothing to do, else the new
+    sector. --untested (r3): T trying in place of successful; T's tries and successful byte are kept."""
     t, o = 8 + 4 * to, 8 + 4 * (1 - to)
-    if not valid(cur) or not successful(cur[t:t + 4]) or not bootable(cur[o:o + 4]):
+    tok = trying(cur[t:t + 4]) if untested else successful(cur[t:t + 4])
+    if not valid(cur) or not tok or not bootable(cur[o:o + 4]):
         return None
     if pick(cur) == to and cur[t] > cur[o]:
         return "same"
@@ -157,13 +164,13 @@ def switched(cur, to):
 def check_switch(name, s):
     global runs
     hx = s.hex()
-    for to in (0, 1):
-        want = switched(s, to)
+    for to, untested in ((0, False), (1, False), (0, True), (1, True)):
+        want = switched(s, to, untested)
         for dry in (True, False):
-            a = ["switch", "--to", "ab"[to], "--expect-sector", hx] + (["--dry-run"] if dry else [])
+            a = ["switch", "--to", "ab"[to], "--expect-sector", hx] + (["--untested"] if untested else []) + (["--dry-run"] if dry else [])
             rc, after, out, err = run(BIN, s, *a)
             runs += 1
-            tag = "%s switch to %s%s" % (name, "ab"[to], " dry" if dry else "")
+            tag = "%s switch to %s%s%s" % (name, "ab"[to], " untested" if untested else "", " dry" if dry else "")
             if want is None:
                 if rc != 1 or after != s or out:
                     fail("%s: want refused, got rc %d out %r %s" % (tag, rc, out, err))
@@ -178,6 +185,8 @@ def check_switch(name, s):
                 o = 8 + 4 * (1 - to)
                 ok = ok and valid(after) and pick(after) == to and bootable(after[o:o + 4]) and after[8 + 4 * to] > after[o]
                 ok = ok and all(after[i] == s[i] for i in range(512) if i not in (8 + 4 * to, o, 28, 29, 30, 31))
+                # --untested: T is still trying, never marked; the CRC is big-endian over bytes 0..27
+                ok = ok and (not untested or trying(after[8 + 4 * to:12 + 4 * to])) and after[28:32] == crc_be(after)
                 if not ok:
                     fail("%s: want %s, got rc %d out %r after %s %s" % (tag, want[:32].hex(), rc, out, after[:32].hex(), err))
         g = bytearray(s)
@@ -291,6 +300,10 @@ for a, label in ((["repair", "--keeper", "a"], "no --expect-sector"),
                  (["switch", "--to", "a", "--keeper", "a", "--expect-sector", hx], "switch with --keeper"),
                  (["switch", "--to", "a", "--slot", "a", "--expect-sector", hx], "switch with --slot"),
                  (["switch", "--to", "a", "--expect-sector", hx, "--lower-keeper"], "switch with --lower-keeper"),
+                 (["arm-trying", "--slot", "a", "--untested"], "--untested with arm"),
+                 (["disable", "--slot", "a", "--untested"], "--untested with disable"),
+                 (["repair", "--keeper", "a", "--expect-sector", hx, "--untested"], "--untested with repair"),
+                 (["status", "--untested"], "--untested with status"),
                  (["repair", "--keeper", "a", "--to", "b", "--expect-sector", hx], "repair with --to"),
                  (["disable", "--slot", "b", "--to", "a"], "--to with disable"),
                  (["status", "--to", "a"], "--to with status")):
@@ -318,7 +331,11 @@ if OLD:
                 secs.append(mk([a >> 4, (a >> 1) & 7, a & 1, 0], [b >> 4, (b >> 1) & 7, b & 1, 0]))
     nd = 0
     for s in secs:
-        for c in cmds:
+        # r3: with --old the r2 binary, repair and switch without --untested must be r2's too
+        sx = s.hex()
+        rs = [["repair", "--keeper", k, "--expect-sector", sx] + d for k in "ab" for d in ([], ["--dry-run"])]
+        rs += [["switch", "--to", k, "--expect-sector", sx] + d for k in "ab" for d in ([], ["--dry-run"])]
+        for c in cmds + (rs if os.environ.get("OLD_HAS_SWITCH") else []):
             r1 = run(OLD, s, *c)
             r2 = run(BIN, s, *c)
             nd += 1
