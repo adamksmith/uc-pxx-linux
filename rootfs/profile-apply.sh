@@ -21,7 +21,8 @@
 #
 # The steps, in this order (a cut leaves the services of the profile off, so
 # a half kiosk never starts; the next run does every step again):
-#   1. lva (ha): /opt/lva from --lva (the old /opt/lva is removed)
+#   1. lva (ha): /opt/lva and /usr/local/bin/linux-voice-assistant from --lva
+#      (the old /opt/lva is removed)
 #   2. owner root for every entry of /etc and /usr/local (no link followed)
 #   3. the shared library check of the profile's programs
 #   4. the users and groups of the profile (kiosk, tsx-setup)
@@ -125,20 +126,27 @@ log "profile $P"
 
 # 1. /opt/lva of the ha profile (DESIGN-R23 §3.5: the reproducible /opt/lva of
 # the reference build; install-lva.sh needs a compiler and PyPI, the unit has
-# neither). Every member must be lva or under lva/.
+# neither) and its launcher /usr/local/bin/linux-voice-assistant: the two
+# things that install-lva.sh makes. Every member of lva.tar must be opt/lva,
+# under opt/lva/, or the launcher.
 if [ -n "$LVA" ]; then
 	bad=$(tar -tf "$LVA" | awk '
 		{ n = $0; sub(/^\.\//, "", n) }
-		n !~ /^lva(\/|$)/ || n ~ /(^|\/)\.\.(\/|$)/ { print; exit }') || die "cannot read $LVA"
-	[ -z "$bad" ] || die "$LVA has a member outside lva/: $bad"
+		n ~ /(^|\/)\.\.(\/|$)/ || !(n ~ /^opt\/lva(\/|$)/ || n == "usr/local/bin/linux-voice-assistant") { print; exit }') ||
+		die "cannot read $LVA"
+	[ -z "$bad" ] || die "$LVA has a member that is not /opt/lva or the launcher: $bad"
 	rm -rf /opt/.lva-new
 	mkdir -p /opt/.lva-new
 	tar -xf "$LVA" -C /opt/.lva-new || die "cannot unpack $LVA"
-	[ -d /opt/.lva-new/lva ] || die "$LVA has no folder lva"
+	N=/opt/.lva-new
+	[ -d $N/opt/lva ] && [ -f $N/usr/local/bin/linux-voice-assistant ] && [ ! -L $N/usr/local/bin/linux-voice-assistant ] ||
+		die "$LVA has no opt/lva or no launcher"
 	rm -rf /opt/lva
-	mv /opt/.lva-new/lva /opt/lva
-	rmdir /opt/.lva-new
-	log "/opt/lva from $(basename "$LVA") ($(sha256sum "$LVA" | cut -d' ' -f1))"
+	mv $N/opt/lva /opt/lva
+	mkdir -p /usr/local/bin
+	mv -f $N/usr/local/bin/linux-voice-assistant /usr/local/bin/linux-voice-assistant
+	rm -rf $N
+	log "/opt/lva and /usr/local/bin/linux-voice-assistant from $(basename "$LVA") ($(sha256sum "$LVA" | cut -d' ' -f1))"
 fi
 
 # 2. the owner of the files that the packages put into /etc and /usr/local

@@ -156,6 +156,20 @@ ones.
 `rootfs/profile.sh` reads the lists. `mkrootfs.sh` and
 `rootfs/tests/test-profiles.sh` both use it.
 
+The profile steps after the package install are one script,
+`rootfs/profile-apply.sh PROFILE ROOT [--lva FILE]` (DESIGN-R23 §3.5): `/opt/lva`
+of the ha profile from a packed `lva.tar` (`rootfs/lva-build.sh` runs
+`install-lva.sh` of tsx-ha in the build container and packs the result
+reproducibly), root as the owner of `/etc` and `/usr/local`, the shared library
+check, the users `kiosk` and `tsx-setup`, the hostname (only over a default
+name), the trim, the fontconfig caches, the files of `profiles/image.list` (a
+file the profile does not have is removed) and, last, the services of the
+profile. `mkrootfs.sh` runs it on the image it builds; for a tree other than
+`/` the script copies itself into the tree and runs there under `chroot`, so
+the tree's own busybox does the work. An R23 base image ships the same script
+in `/usr/share/uc-pxx-provision/` (`profile-apply.sh --install-set`), and the
+unit's first-boot provisioning runs that copy ([mainline-payload.md](mainline-payload.md#r23-base-build)).
+
 ## Root login
 
 A public image has no root password. The field in `/etc/shadow` is locked. The

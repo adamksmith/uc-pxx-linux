@@ -271,6 +271,27 @@ def test_manifest():
         refuses(cm.Excluder, "a bad rule %r" % r, [r])
 
 
+def test_installer_vector():
+    print("== contentmanifest: the installer's vector (R23-FORMATS §1.2, TestManifestFormat) ==")
+    d = "d"
+    tree = [(b"/", d, 0o755, 0, 0, None), (b"/etc", d, 0o755, 0, 0, None),
+            (b"/etc/tsx", d, 0o755, 0, 0, None), (b"/etc/tsx/build-id", "f", 0o644, 0, 0, b"0.2.0-rc10-kiosk-ha\n"),
+            (b"/etc/sh link", "l", 0o777, 0, 0, b"../usr/bin/sh x"), (b"/etc/fifo", "p", 0o600, 0, 0, None),
+            (b"/usr", d, 0o755, 0, 0, None), (b"/usr/bin", d, 0o755, 0, 0, None),
+            (b"/usr/bin/su", "f", 0o4755, 0, 0, b"su"), (b"/usr/bin/su2", "f", 0o4755, 0, 0, b"su"),
+            (b"/usr/lib", d, 0o755, 0, 0, None), (b"/usr/lib/py", d, 0o755, 0, 0, None),
+            (b"/usr/lib/py/__pycache__", d, 0o755, 0, 0, None),
+            (b"/usr/lib/py/__pycache__/a.pyc", "f", 0o644, 0, 0, b"pyc"),
+            (b"/var", d, 0o755, 0, 0, None), (b"/var/log", d, 0o755, 0, 0, None),
+            (b"/var/log/messages", "f", 0o644, 0, 0, b"boot\n"), (b"/var/lib", d, 0o755, 0, 0, None),
+            (b"/var/lib/tsx", d, 0o755, 0, 0, None), (b"/var/lib/tsx/autoupdate", d, 0o755, 0, 0, None),
+            (b"/var/lib/other", d, 0o755, 0, 0, None)]
+    x = cm.Excluder(["/var/log", "/var/lib/*", "!/var/lib/tsx", "**/__pycache__", "/etc/ss*"])
+    man, n = cm.build(VSource(tree), x)
+    eq((hashlib.sha256(man).hexdigest(), n), ("c1aec0a4bdacf8ed443d49ec4e5bc23f69feb12e520c961734a0652f595174c9", 15),
+       "the installer's TestManifestFormat vector: the same manifest (sha256 c1aec0a4..., 15 lines)")
+
+
 def mktree(top):
     def w(p, data=b"", mode=0o644):
         os.makedirs(os.path.dirname(top + p), exist_ok=True)
@@ -539,6 +560,7 @@ def main():
         print("wrote", VECTORS)
         return 0
     test_manifest()
+    test_installer_vector()
     test_delta()
     test_bundle()
     print("%d ok, %d failed" % (N, F))

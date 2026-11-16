@@ -285,12 +285,60 @@ boot anyway) or compressed.
 
 ## Tests
 
+`tools/mainline-payload/test-r23.py` checks `contentmanifest.py` (the format
+on a virtual tree, the shared vectors, the exclusion list and the difference,
+their refusals) and `bundle.py` (repo, make, check, profiles.json, the
+refusals) on the host.
 `kernel/tests/test-mainline-payload.sh` checks the template and assembly
 layout with made-up inputs (the assembly of `payload.py` equals
 `kernel/mkimage.sh --resource` byte for byte), the refusals of
 `check-template` and of the manifest generator, and that `build.sh` refuses a
 checkout with another kernel pin. `UC_PXX_RESOURCE=FILE` adds a whole
 made-up manifest against the contract.
+
+## R23 base build
+
+`build.sh build --provision-bin FILE` makes the R23 base (DESIGN-R23 §7.2): the
+console profile as a STEP-2 build with the USB set and the provisioning set
+(the `uc-pxx-provision` binary, its sha256 the input `PROVISION_BIN_SHA256`;
+the service `rootfs/provision/`; `/usr/share/uc-pxx-provision/` with
+`profile-apply.sh`, `profile.sh`, `profiles/`, `overlay/` and `profiles.json`).
+In the same build container, `rootfs/r23-refs.sh` makes from the finished base
+tree, for each profile (`console`, `kiosk`, `kiosk-ha` = the ha profile):
+
+1. the package list (`apk add --simulate` against the snapshot), the bundle's
+   repository (`bundle.py repo`: the four signed indexes and those `.apk` files,
+   byte copies, each checked against its index), then the install as on the
+   unit: the base's own apk in the tree (`chroot`), `--no-network`, only the
+   bundle's repository, the names in the order of `bundle.json` `add`;
+2. `/opt/lva` (kiosk-ha, `rootfs/lva-build.sh`), the profile steps by the
+   base's own `/usr/share/uc-pxx-provision/profile-apply.sh` in the tree;
+3. the content manifest of the reference B (`contentmanifest.py`, the exclusion
+   list `r23/content-exclude.txt`): ref_b; the bundle (`bundle.py make`,
+   `bundle.py check`);
+4. step 2's difference (`r23/clone-delta.json`, build id RELEASE-PROFILE), the
+   forbidden search (no r2, `uc-pxx-step2` or `uc-pxx-provision` in A), the
+   manifest of the reference A: ref_a.
+
+The console reference B must be the base itself. Then `profiles.json` goes
+into the base, and the base is made as usual (4 KiB blocks), plus
+`rootfs.ext4.zst` (`zstd -19 --zstd=wlog=23 -T1`) and a schema-3 manifest
+(`rootfs_zst`). Outputs: `uc-pxx-mainline/` (manifest.json, boot-template.img,
+rootfs.ext4.zst), `rootfs.ext4`, and `r23/` (the bundles
+`uc-pxx-profile-NAME-RELEASE.tar` with their `bundle.json` as `.tar.json`, the
+manifests `ref-b-NAME.manifest` and `ref-a-NAME.manifest`, `installed-NAME.txt`,
+`profiles.json`, `refs.txt`). The formats are in
+`tsx-mainline/plan/uc-pxx/R23-FORMATS-2026-11-15.md` (a plan file) and in the
+docstrings of `contentmanifest.py` and `bundle.py`; `r23/testvectors.json`
+holds the shared vectors of the content manifest (`test-r23.py`).
+
+The two-stage order: ref_a does not depend on the step-2 binary (step 2's
+difference removes the step-2 set), so a first build gives ref_a and the
+bundles for step 2's gate; the base is then built again with that step 2, and
+`--expect-refs` (the first build's `r23/refs.txt`) stops the build when ref_a,
+a bundle or an installed list differs. The inputs file (format 8) records
+`PROVISION_BIN_SHA256`, `R23_RELEASE`, `PROVISION_URLS`,
+`CONTENT_EXCLUDE_SHA256` and `CLONE_DELTA_SHA256`.
 
 ## The USB set (both-slot builds)
 

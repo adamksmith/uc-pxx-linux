@@ -1,9 +1,10 @@
 #!/bin/sh
 # lva-build.sh ROOT OUT: build /opt/lva of a tree that has the ha profile's
 # packages (install-lva.sh of the package tsx-ha: the Home Assistant device
-# tsx-esphome and the voice satellite linux-voice-assistant) and pack it into
-# OUT (lva.tar), deterministically. Runs INSIDE the build container
-# (mkrootfs.sh, rootfs/r23-refs.sh), as root.
+# tsx-esphome and the voice satellite linux-voice-assistant) and pack what
+# install-lva.sh makes (/opt/lva and the launcher
+# /usr/local/bin/linux-voice-assistant) into OUT (lva.tar), deterministically.
+# Runs INSIDE the build container (mkrootfs.sh, rootfs/r23-refs.sh), as root.
 #
 # The TensorFlow Lite C library for the wake word models comes from the
 # tensorflow-lite-c package (tsx-aports, packages-tsx.txt). The package tsx-ha
@@ -18,7 +19,8 @@
 # random name. The debug info and the build id of that library name the folder:
 # they are removed (the panel never needs them). The tar: GNU format, sorted
 # names, numeric owners, every time SOURCE_DATE_EPOCH (0 without it), members
-# lva and lva/...
+# opt/lva, opt/lva/... and usr/local/bin/linux-voice-assistant (paths relative
+# to the root of the tree).
 set -eu
 R=${1:?ROOT} OUT=${2:?OUT}
 CACHE=${UC_PXX_PIP_DIR:-/build/pip}
@@ -38,6 +40,9 @@ find "$R/opt/lva" -type f -name '*.so' | sort | while read -r f; do
 	grep -q -F 'pip-req-build-' "$f" && die "$f still names the pip build folder"
 	echo "stripped the debug info and the build id of ${f#"$R"}"
 done
-tar -C "$R/opt" --sort=name --format=gnu --numeric-owner --mtime="@${SOURCE_DATE_EPOCH:-0}" -cf "$OUT.part" lva
+[ -f "$R/usr/local/bin/linux-voice-assistant" ] && [ ! -L "$R/usr/local/bin/linux-voice-assistant" ] ||
+	die "install-lva.sh made no launcher /usr/local/bin/linux-voice-assistant"
+tar -C "$R" --sort=name --format=gnu --numeric-owner --mtime="@${SOURCE_DATE_EPOCH:-0}" -cf "$OUT.part" \
+	opt/lva usr/local/bin/linux-voice-assistant
 mv -f "$OUT.part" "$OUT"
 echo "lva.tar: $(sha256sum "$OUT" | cut -d' ' -f1) $(wc -c < "$OUT") bytes, $(tar -tf "$OUT" | wc -l) members"

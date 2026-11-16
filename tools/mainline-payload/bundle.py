@@ -22,8 +22,8 @@ deterministic tar. And profiles.json, the base's pinned list of them.
       write bundle.json and the bundle TAR. Prints "bundle SHA256 SIZE" and
       "index SHA256 SIZE" (index = bundle.json).
   bundle.py installed-sha256 DB
-      The sha256 of the sorted "NAME-VERSION" lines of an installed db (what
-      `apk info -v | LC_ALL=C sort` prints), and the count.
+      The sha256 of an apk installed db file (the done record's and
+      profiles.json's installed_sha256: the file's bytes) and its package count.
   bundle.py profiles --release R --base-version V --alpine v3.24 --exclude-sha256 S
                      --delta-sha256 S --url URL [--url URL ...]
                      --profile NAME:APPLY:REF_B:REF_A:INSTALLED[:BUNDLE_TAR:INDEX_JSON] ... --out FILE
@@ -161,9 +161,9 @@ def read_db(path):
 
 
 def installed_sha(db):
+    """installed_sha256 (R23-FORMATS §3): the sha256 of /lib/apk/db/installed itself."""
     pk = read_db(db)
-    lines = sorted("%s-%s\n" % (n, v) for n, v in pk.items())
-    return hashlib.sha256("".join(lines).encode()).hexdigest(), len(lines)
+    return sha256_file(db)[0], len(pk)
 
 
 def read_list(path):
