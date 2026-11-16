@@ -481,7 +481,7 @@ STEP2_SIZES = (777976, 4980860)
 # uc-pxx-xfer* or uc-pxx-usb* that is not one of them says no.
 USB_SET = {
     "usr/libexec/uc-pxx-xfer": ("dir", 0o755),
-    "usr/libexec/uc-pxx-xfer/uc-pxx-xfer": ("42d764e0da7b5871de9980e1205c66769e0092f8a63d53a8b9353a93831c952f", 0o755),
+    "usr/libexec/uc-pxx-xfer/uc-pxx-xfer": ("62421c487cf0233d1cee2844f623bf4de120a3ec7daa599bfb6f6465d6fe5d60", 0o755),
     "etc/init.d/uc-pxx-usb": ("src:rootfs/usb/init.d/uc-pxx-usb", 0o755),
     "etc/conf.d/uc-pxx-usb": ("src:rootfs/usb/conf.d/uc-pxx-usb", 0o644),
     "usr/share/uc-pxx-usb": ("dir", 0o755),
@@ -704,7 +704,11 @@ def cmd_both_slot(a):
         # (no /etc/uc-pxx-step2, no /root/.ssh): the set and the marker line
         # must agree
         kind = "supervised" if any(n.startswith("etc/uc-pxx-step2") for n in got) else "end user"
-        check_set("step 2", got, STEP2_SET if kind == "supervised" else STEP2_SET_EU)
+        want_set = STEP2_SET if kind == "supervised" else STEP2_SET_EU
+        if prov_sha is not None:
+            # an R23 base copies itself into the other slot: the clone conf
+            want_set = dict(want_set, **{"etc/conf.d/uc-pxx-step2": ("src:rootfs/step2/conf.d/uc-pxx-step2-clone", 0o644)})
+        check_set("step 2", got, want_set)
         mk = step2[STEP2_MARKER]
         line = (mk[4] or b"").decode("utf-8", "replace") if mk[0] == "file" else ""
         want_bin = [v for k, (v, _) in STEP2_SET.items() if k.endswith("/uc-pxx-step2") and re.fullmatch("[0-9a-f]{64}", v)][0]

@@ -528,7 +528,10 @@ esac
 # both-slot gate pins each of these files (internal/mainline bothSlotUSB) and
 # refuses them in a slot-A payload. Without UC_PXX_XFER_BIN no file of these
 # names may be in the image.
-XFER_SHA256=42d764e0da7b5871de9980e1205c66769e0092f8a63d53a8b9353a93831c952f
+# uc-pxx-xfer 62421c48... of uc-pxx-installer mainline-rc-10 fd90ed4 (the
+# kinds step1, consent and provision; ci/build-xfer.sh, twice byte-identical;
+# its bytes depend on no gate data). Earlier: 42d764e0... (RC-5 to RC-9).
+XFER_SHA256=62421c487cf0233d1cee2844f623bf4de120a3ec7daa599bfb6f6465d6fe5d60
 XFER_PATH=usr/libexec/uc-pxx-xfer/uc-pxx-xfer
 XFER_ID=990
 USB_FILES="etc/conf.d/uc-pxx-usb etc/init.d/uc-pxx-usb etc/runlevels/default/uc-pxx-usb etc/ssh/sshd_config.d/uc-pxx-usb.conf usr/libexec/uc-pxx-xfer usr/libexec/uc-pxx-xfer/uc-pxx-xfer usr/share/uc-pxx-usb "
@@ -616,7 +619,13 @@ if [ -n "${UC_PXX_STEP2_BOOTCTL_INST:-}" ]; then
 	[ "$(sha256sum "$R/$STEP2_INST_PATH" | cut -d' ' -f1)" = "$STEP2_INST_SHA256" ] || { echo "ERROR: uc-pxx-bootctl-inst changed in the copy"; exit 1; }
 	[ "$(sha256sum "$R/$STEP2_BIN_PATH" | cut -d' ' -f1)" = "$STEP2_BIN_SHA256" ] || { echo "ERROR: uc-pxx-step2 changed in the copy"; exit 1; }
 	install -D -m 755 -o 0 -g 0 "$HERE/step2/init.d/uc-pxx-step2" $R/etc/init.d/uc-pxx-step2
-	install -D -m 644 -o 0 -g 0 "$HERE/step2/conf.d/uc-pxx-step2" $R/etc/conf.d/uc-pxx-step2
+	# an R23 base (UC_PXX_PROVISION_BIN, below) copies itself into the other
+	# slot: the clone conf (UC_PXX_STEP2_KIND=clone, no payload folder)
+	if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
+		install -D -m 644 -o 0 -g 0 "$HERE/step2/conf.d/uc-pxx-step2-clone" $R/etc/conf.d/uc-pxx-step2
+	else
+		install -D -m 644 -o 0 -g 0 "$HERE/step2/conf.d/uc-pxx-step2" $R/etc/conf.d/uc-pxx-step2
+	fi
 	mkdir -p $R/etc/runlevels/default
 	ln -sf /etc/init.d/uc-pxx-step2 $R/etc/runlevels/default/uc-pxx-step2
 	if [ "${UC_PXX_SSH_ACCESS:-}" = setup ]; then
@@ -702,6 +711,16 @@ if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
 	install -D -m 644 -o 0 -g 0 "$HERE/provision/conf.d/uc-pxx-provision" $R/etc/conf.d/uc-pxx-provision
 	ln -sf /etc/init.d/uc-pxx-provision $R/etc/runlevels/default/uc-pxx-provision
 	sh "$HERE/profile-apply.sh" --install-set $R/usr/share/uc-pxx-provision
+	# what uc-pxx-provision needs of the base (R23-FORMATS §12 item 4): rc-service
+	# (it takes the gadget from uc-pxx-usb), the receiver's user and group 990
+	# (the USB set), Go's CA bundle for the https fetch, setsid (its init
+	# script), and the step-2 clone conf
+	[ -x $R/sbin/rc-service ] && [ -f $R/etc/ssl/certs/ca-certificates.crt ] && [ -x $R/usr/bin/setsid ] ||
+		{ echo "ERROR: an R23 base needs /sbin/rc-service, /etc/ssl/certs/ca-certificates.crt and /usr/bin/setsid"; exit 1; }
+	grep -qx 'uc-pxx-xfer:x:990:990:[^:]*:[^:]*:/sbin/nologin' $R/etc/passwd && grep -qx 'uc-pxx-xfer:x:990:' $R/etc/group ||
+		{ echo "ERROR: an R23 base needs the user and group uc-pxx-xfer (990)"; exit 1; }
+	cmp -s "$HERE/step2/conf.d/uc-pxx-step2-clone" $R/etc/conf.d/uc-pxx-step2 ||
+		{ echo "ERROR: an R23 base needs the step-2 clone conf (UC_PXX_STEP2_KIND=clone)"; exit 1; }
 	log "the provisioning set: uc-pxx-provision $PROV_SHA256, the service uc-pxx-provision, /usr/share/uc-pxx-provision"
 fi
 prov=$(cd $R && find . -name 'uc-pxx-provision*' | sed 's#^\./##' | sort | tr '\n' ' ')

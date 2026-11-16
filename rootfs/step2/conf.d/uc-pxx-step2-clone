@@ -1,0 +1,10 @@
+# /etc/conf.d/uc-pxx-step2 of an R23 base (a STEP-2 build with the
+# provisioning set, mkrootfs.sh UC_PXX_PROVISION_BIN; uc-pxx-installer
+# mainline-rc-10, DESIGN-R23 §4). UC_PXX_STEP2_KIND=clone: there is no part-2
+# payload (no UC_PXX_STEP2_PAYLOAD): after the first-boot provisioning wrote
+# its done record, step 2 copies this slot (B) into the other slot (A), the
+# pinned difference and A's content check against the profile's ref_a.
+# UC_PXX_STEP2_USB=yes: the installer page's consent comes over the USB cable
+# (uc-pxx-xfer kind consent); the panel's 3 s hold works without it.
+UC_PXX_STEP2_KIND=clone
+UC_PXX_STEP2_USB=yes

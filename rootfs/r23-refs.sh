@@ -18,6 +18,12 @@
 #      bundle's repository; kiosk-ha: /opt/lva built and packed (lva-build.sh);
 #   3. the profile steps as on the unit: the base's own
 #      /usr/share/uc-pxx-provision/profile-apply.sh in the tree (chroot);
+#   (the install and the profile steps run as uc-pxx-provision runs them on
+#   the unit, uc-pxx-installer internal/provision, R23-FORMATS §12 items 1 and
+#   2: the same argv and paths, /run/uc-pxx-provision/repositories and the
+#   bundle's members in /run/uc-pxx-provision/stage/repo, under `env -i` with
+#   exactly the unit's PATH, HOME and LC_ALL, umask 022, cwd /, stdin
+#   /dev/null: no SOURCE_DATE_EPOCH and no other variable of the build);
 #   4. the content manifest of the reference B (contentmanifest.py, the pinned
 #      exclusion list r23/content-exclude.txt): ref_b; the bundle (bundle.py
 #      make, checked again as the unit reads it);
@@ -62,6 +68,9 @@ r23_refs() {
 		echo "CLONE_DELTA_SHA256=$DELTA_SHA"
 	} > "$O/refs.txt"
 	PROFARGS=
+	# the unit's run of a child (uc-pxx-provision liveExec): this environment only
+	UNITENV="env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C"
+	UNITRUN=/run/uc-pxx-provision UNITREPO=/run/uc-pxx-provision/stage/repo
 	for name in console kiosk kiosk-ha; do
 		case $name in kiosk-ha) p=ha;; *) p=$name;; esac
 		X=/build/ref-$name
@@ -77,14 +86,16 @@ r23_refs() {
 			rm -rf /build/repo-$name
 			$PY "$T/bundle.py" repo --alpine-dir "$MIRROR" --tsx-dir "$TSX_APK_LOCAL" --branch "$ALPINE" \
 				--list /build/$name.list --out /build/repo-$name || exit 1
-			# the install of the unit: the base's apk, no network, only the bundle
-			mkdir -p "$X/tmp/r23"
-			cp -a /build/repo-$name "$X/tmp/r23/repo"
-			sed 's#^#/tmp/r23/repo/#' /build/repo-$name/repositories > "$X/tmp/r23/repositories"
-			# shellcheck disable=SC2046 # the names
-			chroot "$X" /sbin/apk add --no-network --no-cache --repositories-file /tmp/r23/repositories \
-				$(cat /build/$name.add) > "$O/apk-$name.log" 2>&1 || { tail -30 "$O/apk-$name.log"; echo "ERROR: the bundle install ($name)"; exit 1; }
-			rm -rf "$X/tmp/r23"
+			# the install of the unit: the base's apk, no network, only the bundle,
+			# the unit's argv, paths and environment
+			[ ! -e "$X$UNITRUN" ] || { echo "ERROR: the base has $UNITRUN"; exit 1; }
+			mkdir -p "$X$UNITREPO"
+			cp -a /build/repo-$name/. "$X$UNITREPO/"
+			rm -f "$X$UNITREPO/repositories"
+			sed "s#^#$UNITREPO/#" /build/repo-$name/repositories > "$X$UNITRUN/repositories"
+			# shellcheck disable=SC2046,SC2086 # the names; the env words
+			(umask 022; chroot "$X" $UNITENV /sbin/apk add --no-network --no-cache --repositories-file "$UNITRUN/repositories" \
+				$(cat /build/$name.add) < /dev/null) > "$O/apk-$name.log" 2>&1 || { tail -30 "$O/apk-$name.log"; echo "ERROR: the bundle install ($name)"; exit 1; }
 			grep -E '^[A-Za-z0-9]' "$X/etc/apk/world" > /build/$name.world
 			if sh "$HERE/profile.sh" has "$p" step lva; then
 				sh "$HERE/lva-build.sh" "$X" /build/lva-$name.tar > "$O/lva-$name.log" 2>&1 || { tail -30 "$O/lva-$name.log"; exit 1; }
@@ -93,13 +104,13 @@ r23_refs() {
 		fi
 		# the profile steps of the unit: the base's own script, in the tree
 		[ "$name" != console ] || $PY "$T/contentmanifest.py" build "$X" --exclude "$EXCL" --out /build/console-before.manifest > /dev/null || exit 1
-		mkdir -p "$X/tmp/r23"
+		mkdir -p "$X$UNITREPO"
 		A=
-		if [ -n "$LVA" ]; then cp "$LVA" "$X/tmp/r23/lva.tar"; A="--lva /tmp/r23/lva.tar"; fi
-		# shellcheck disable=SC2086 # empty or two words
-		chroot "$X" /bin/sh /usr/share/uc-pxx-provision/profile-apply.sh "$p" / $A > "$O/apply-$name.log" 2>&1 ||
+		if [ -n "$LVA" ]; then cp "$LVA" "$X$UNITREPO/lva.tar"; A="--lva $UNITREPO/lva.tar"; fi
+		# shellcheck disable=SC2086 # the env words; empty or two words
+		(umask 022; chroot "$X" $UNITENV /bin/sh /usr/share/uc-pxx-provision/profile-apply.sh "$p" / $A < /dev/null) > "$O/apply-$name.log" 2>&1 ||
 			{ tail -30 "$O/apply-$name.log"; echo "ERROR: the profile steps ($name)"; exit 1; }
-		rm -rf "$X/tmp/r23"
+		rm -rf "$X$UNITRUN"
 		B=$($PY "$T/contentmanifest.py" build "$X" --exclude "$EXCL" --out "$O/ref-b-$name.manifest" | cut -d' ' -f1) || exit 1
 		[ -n "$B" ] || exit 1
 		# no Rockchip resource in the tree (payload.py scan-tar of the base, here
