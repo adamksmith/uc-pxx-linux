@@ -62,9 +62,9 @@ def refuses(fn, msg, *a):
 EXCL = os.path.join(HERE, "r23", "content-exclude.txt")
 DELTA = os.path.join(HERE, "r23", "clone-delta.json")
 VECTORS = os.path.join(HERE, "r23", "testvectors.json")
-# the Go gate's ExcludeSHA256 and DeltaPin (uc-pxx-installer mainline-rc-10 6d01ca2 internal/clone, the
+# the Go gate's ExcludeSHA256 and DeltaPin (uc-pxx-installer mainline-rc-10 85015e6 internal/clone, the
 # draft of 2026-11-15); the files here must be byte-identical with the Go side
-GO_EXCLUDE_SHA256 = "719f4257dce7cbe4c31013220c78e450c624bf623dd75414ab428da4463eaa33"
+GO_EXCLUDE_SHA256 = "dcf1591e6bdface31d0a62754b4e4b8fdf64029a3cbfda96eb9c82acde043134"
 GO_DELTA_PIN = "d3044ca39279c866d81543edf70d9d80e8a3220ac41df84ce7d71fbca44a556d"
 
 
