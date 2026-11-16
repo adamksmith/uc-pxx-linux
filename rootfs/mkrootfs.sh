@@ -593,17 +593,18 @@ fi
 STEP2_INST_SHA256=20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203
 STEP2_INST_PATH=usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst
 # uc-pxx-step2 of uc-pxx-installer (ci/build-step2.sh, built twice
-# byte-identical): 05d2d48b... (5374076 bytes) of uc-pxx-installer mainline-rc-10
-# 514d3c8, the R23 release: its clone gate holds the three profiles of
+# byte-identical): 65eeed56... (5374076 bytes) of uc-pxx-installer mainline-rc-10
+# 5de60c4, the R23 release: its clone gate holds the three profiles of
 # 0.2.0-rc10 (ref_a, ref_b, bundles of the stage-1 build of 8baacf1) and the pin
-# of uc-pxx-provision e2d676a9...; its mainline gate lists no normal payload
-# (the record MAINLINE-RC10-RELEASE-2026-11-15.md). Earlier: e6cf7147... of
+# of uc-pxx-provision 65cd9cf1...; its mainline gate lists no normal payload
+# (the release record MAINLINE-RC10-RELEASE-2026-11-15.md). Earlier: 05d2d48b... of
+# 514d3c8 (the first RC-10 build, superseded by the marker fix), e6cf7147... of
 # mainline-rc-9 811f1c2 (RC-9, gate 0.2.0-rc9 90dd4b74 and 0.2.0-rc9-eu 7cc16383). Earlier
 # pins: 104e752f... of mainline-rc-8 1fcc625 (RC-8), dceb6953... of mainline-rc-8 15d3b2c (the fix-only build), f092d15e... of mainline-rc-7 0d8b5a8, 930a2d18... of mainline-rc-6 81a321f, fe4502b9... of mainline-rc-6, aace79f3... of mainline-rc-5,
 # a44632a6... of d7e2113,
 # ca1c1e67... of mainline-rc-4 6ac0b2c, b857680f... of 22eaf31, 524e89ba... of mainline-rc-3 3c397a7, 7049463f... of d754663, 13ea2508... of 6aab316, 3c2ba06f... of mainline-rc-2 d105ba2, b8c2a6d9... of c0d8f0b, 1cbb32ae... of mainline-rc be239e3,
 # f7cc1d33... of 1605579, a4e753cc... of 9627b27 and b7710fa3... of mainline-step2-rest b9b2e98); NOT yet reviewed for the safety rules: a new build needs a new pin here
-STEP2_BIN_SHA256=05d2d48bd8a43123b161061dfed472daf627bc8ad1ca72c73e700527d69ef515
+STEP2_BIN_SHA256=65eeed56e36382ed0f7a98a62881b48b082ee4f9a4a2df2329104a44b7c572c2
 STEP2_BIN_PATH=usr/libexec/uc-pxx-step2/uc-pxx-step2
 STEP2_DATA_SHA256=9162c65df08ac5577e38a2fe124d8cb1434b9b2bcfe787d6fba76055b8006791
 STEP2_DATA_PATH=usr/sbin/uc-pxx-data-migrate
@@ -639,7 +640,10 @@ if [ -n "${UC_PXX_STEP2_BOOTCTL_INST:-}" ]; then
 		echo "supervised: a person runs each step of step 2 with a rule-9 GO (STEP-2 BUILD default)" > $R/etc/uc-pxx-step2/supervised
 	fi
 	mkdir -p $R/etc/tsx
-	echo "STEP-2 BUILD: /$STEP2_INST_PATH (uc-pxx-bootctl-inst r2 $STEP2_INST_SHA256), /$STEP2_BIN_PATH (uc-pxx-step2 $STEP2_BIN_SHA256), the service uc-pxx-step2 ($STEP2_KIND). For no unit before its RULES line." > $R/etc/tsx/step2-bootctl-inst
+	# each sha256 is a word of its own (uc-pxx-installer internal/step2 markerNames:
+	# the clone plan needs the running program's sha256 as a whitespace-separated
+	# word; RC-10 release review BLOCKER-1: "SHA)," is no such word)
+	echo "STEP-2 BUILD: /$STEP2_INST_PATH (uc-pxx-bootctl-inst r2 $STEP2_INST_SHA256 ), /$STEP2_BIN_PATH (uc-pxx-step2 $STEP2_BIN_SHA256 ), the service uc-pxx-step2 ($STEP2_KIND). For no unit before its RULES line." > $R/etc/tsx/step2-bootctl-inst
 	log "STEP-2 BUILD (UC_PXX_STEP2_BOOTCTL_INST): r2 and uc-pxx-step2 in /usr/libexec/uc-pxx-step2, the service uc-pxx-step2 ($STEP2_KIND). For no unit before its RULES line"
 else
 	[ -z "${UC_PXX_STEP2_BIN:-}" ] || { echo "ERROR: UC_PXX_STEP2_BIN needs UC_PXX_STEP2_BOOTCTL_INST (a STEP-2 build)"; exit 1; }
@@ -693,11 +697,11 @@ fi
 # these names. Such an image is for no unit before its RULES lines.
 PROV_BIN_PATH=usr/libexec/uc-pxx-provision/uc-pxx-provision
 PROV_FILES="etc/conf.d/uc-pxx-provision etc/init.d/uc-pxx-provision etc/runlevels/default/uc-pxx-provision usr/libexec/uc-pxx-provision $PROV_BIN_PATH usr/share/uc-pxx-provision "
-# The reviewed pin of uc-pxx-provision (R23-BASE-REVIEW MINOR-3): e2d676a9...
-# (6946940 bytes) of uc-pxx-installer mainline-rc-10 5d2d88b (ci/build-provision.sh,
+# The reviewed pin of uc-pxx-provision (R23-BASE-REVIEW MINOR-3): 65cd9cf1...
+# (6946940 bytes) of uc-pxx-installer mainline-rc-10 370343f (ci/build-provision.sh,
 # twice byte-identical; it holds the clone gate's profiles of 0.2.0-rc10). The
 # input UC_PXX_PROVISION_SHA256 must be it. A new build needs a new pin here.
-PROV_PIN_SHA256=e2d676a9e2e2ebe94206077bff532b01135c194e04b58635317c437360aa733b
+PROV_PIN_SHA256=65cd9cf18db954338f7df84dd346713ec9415206d0f277d7089f0f31c3c9a390
 PROV_SHA256=
 if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
 	PROV_SHA256=${UC_PXX_PROVISION_SHA256:-}

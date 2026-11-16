@@ -460,7 +460,7 @@ STEP2_MARKER = "etc/tsx/step2-bootctl-inst"
 STEP2_SET = {
     "usr/libexec/uc-pxx-step2": ("dir", 0o700),
     "usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst": ("20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203", 0o700),
-    "usr/libexec/uc-pxx-step2/uc-pxx-step2": ("05d2d48bd8a43123b161061dfed472daf627bc8ad1ca72c73e700527d69ef515", 0o700),
+    "usr/libexec/uc-pxx-step2/uc-pxx-step2": ("65eeed56e36382ed0f7a98a62881b48b082ee4f9a4a2df2329104a44b7c572c2", 0o700),
     "etc/init.d/uc-pxx-step2": ("src:rootfs/step2/init.d/uc-pxx-step2", 0o755),
     "etc/conf.d/uc-pxx-step2": ("src:rootfs/step2/conf.d/uc-pxx-step2", 0o644),
     "etc/uc-pxx-step2": ("dir", 0o755),
@@ -474,7 +474,7 @@ STEP2_SET = {
 STEP2_SET_EU = {k: v for k, v in STEP2_SET.items() if not k.startswith("etc/uc-pxx-step2")}
 # the two binaries by sha256 (a copy under another name is found by its bytes)
 STEP2_SHAS = {v: k for k, (v, m) in STEP2_SET.items() if re.fullmatch("[0-9a-f]{64}", v)}
-# r2 and uc-pxx-step2 05d2d48b... of mainline-rc-10 514d3c8 (R23-BASE-REVIEW MINOR-2: with the pin)
+# r2 and uc-pxx-step2 65eeed56... of mainline-rc-10 5de60c4 (R23-BASE-REVIEW MINOR-2: with the pin)
 STEP2_SIZES = (777976, 5374076)
 # The USB set of every both-slot build (mkrootfs.sh UC_PXX_XFER_BIN,
 # docs/usb.md; uc-pxx-installer mainline-rc-4): exactly these paths, the same
@@ -713,7 +713,12 @@ def cmd_both_slot(a):
         mk = step2[STEP2_MARKER]
         line = (mk[4] or b"").decode("utf-8", "replace") if mk[0] == "file" else ""
         want_bin = [v for k, (v, _) in STEP2_SET.items() if k.endswith("/uc-pxx-step2") and re.fullmatch("[0-9a-f]{64}", v)][0]
-        if ("(%s)" % kind) not in line or ("(supervised)" in line) != (kind == "supervised") or want_bin not in line:
+        # the rule of uc-pxx-step2 (internal/step2 markerNames): one line of at most
+        # 4096 bytes that ends in a newline and names the sha256 as a word of its own
+        raw = (mk[4] or b"") if mk[0] == "file" else b""
+        one = len(raw) <= 4096 and raw.endswith(b"\n") and not re.search(rb"[\n\r\x00]", raw[:-1])
+        if (not one or ("(%s)" % kind) not in line or ("(supervised)" in line) != (kind == "supervised")
+                or want_bin not in line.split()):
             bad.append("step 2: the marker /%s does not say (%s) and name uc-pxx-step2 %s: %r" % (STEP2_MARKER, kind, want_bin, line.strip()))
         if kind == "end user" and root_ssh:
             bad.append("step 2: an end-user STEP-2 build has /root/.ssh")
