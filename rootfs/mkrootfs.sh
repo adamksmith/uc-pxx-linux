@@ -636,7 +636,8 @@ fi
 inst=$(cd $R && find . -name 'uc-pxx-bootctl-inst*' | sed 's#^\./##' | sort | tr '\n' ' ')
 s2=$(cd $R && find . -name 'uc-pxx-step2*' | sed 's#^\./##' | sort | tr '\n' ' ')
 # a copy of r2 or uc-pxx-step2 under another name, by its bytes (review r2):
-# only files of their sizes are hashed
+# only files of their sizes are hashed (the sizes of the given binaries)
+[ -z "${UC_PXX_STEP2_BIN:-}" ] || [ ! -f "$UC_PXX_STEP2_BIN" ] || STEP2_BIN_SIZE=${STEP2_BIN_SIZE:-$(stat -c %s "$UC_PXX_STEP2_BIN")}
 cp2=$(cd $R && find . -type f \( -size ${STEP2_INST_SIZE:-777976}c -o -size ${STEP2_BIN_SIZE:-4980860}c \) -exec sha256sum {} + |
 	awk -v a="$STEP2_INST_SHA256" -v b="$STEP2_BIN_SHA256" -v pa="./$STEP2_INST_PATH" -v pb="./$STEP2_BIN_PATH" \
 		'($1 == a && $2 != pa) || ($1 == b && $2 != pb) { print $2 }' | tr '\n' ' ')
@@ -795,6 +796,14 @@ if [ -n "$SDE" ]; then
 		find $R -newer /build/sde.ref -exec touch -h -d "@$SDE" {} +
 	fi
 	rm -f /build/sde.ref
+fi
+# An R23 base: the image is the tree that the references were made from (the
+# console reference B: the same manifest after the steps above)
+if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
+	got=$(python3 -I "$TOP/tools/mainline-payload/contentmanifest.py" build $R --exclude "$TOP/tools/mainline-payload/r23/content-exclude.txt" | cut -d' ' -f1)
+	want=$(sed -n 's/^REF_B_CONSOLE=//p' "$OUT/r23/refs.txt")
+	[ -n "$got" ] && [ "$got" = "$want" ] || { echo "ERROR: the base's content manifest is $got, not REF_B_CONSOLE $want"; exit 1; }
+	log "the base is the console reference B ($got)"
 fi
 # the state folder of the tsx tools (above): root, 0755, a folder, empty
 [ -d $R/var/lib/tsx ] && [ ! -L $R/var/lib/tsx ] && [ "$(stat -c '%u:%g %a' $R/var/lib/tsx)" = "0:0 755" ] &&

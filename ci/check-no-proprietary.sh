@@ -12,16 +12,24 @@
 # cannot add one of these files without a failure here.
 #
 #   ci/check-no-proprietary.sh [ROOTFS_OUT]
+#   ci/check-no-proprietary.sh --names FILE LABEL
 #
 # The script always scans the source tree (the repository that holds it).
 # ROOTFS_OUT is a build output directory, for example rootfs/out. The script
 # scans the file names in it and the content lists of rootfs.tar.gz and
 # rootfs.ext4 when they exist. The ext4 scan mounts the image read-only
 # (sudo unless root). UC_PXX_CHECK_SKIP_EXT4=1 skips that scan.
+# --names FILE LABEL scans only the paths of FILE (one per line, for example
+# the paths of an R23 content manifest of a reference tree) for vendor files.
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 OUTDIR=${1:-}
-case ${1:-} in -h|--help) sed -n '2,21p' "$0"; exit 0;; esac
+case ${1:-} in -h|--help) sed -n '2,24p' "$0"; exit 0;; esac
+NAMES=
+if [ "${1:-}" = --names ]; then
+	[ $# = 3 ] && [ -f "$2" ] || { echo "usage: check-no-proprietary.sh --names FILE LABEL" >&2; exit 2; }
+	NAMES=$2 LABEL=$3 OUTDIR=
+fi
 [ -z "$OUTDIR" ] || [ -d "$OUTDIR" ] || { echo "check-no-proprietary: $OUTDIR is not a directory" >&2; exit 2; }
 
 # The base name of a vendor file, for any path.
@@ -44,6 +52,12 @@ scan_list() {
 		echo "ok: $label"
 	fi
 }
+
+if [ -n "$NAMES" ]; then
+	scan_list "$LABEL" "$FW" < "$NAMES"
+	[ ! -s "$FLAG" ] && echo "ok: no vendor files in $LABEL" && exit 0
+	echo "FAIL: vendor file(s) found (see above)"; exit 1
+fi
 
 echo "== source tree $HERE"
 # Android images are a source tree problem only. A build output holds ours.

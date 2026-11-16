@@ -62,9 +62,9 @@ def refuses(fn, msg, *a):
 EXCL = os.path.join(HERE, "r23", "content-exclude.txt")
 DELTA = os.path.join(HERE, "r23", "clone-delta.json")
 VECTORS = os.path.join(HERE, "r23", "testvectors.json")
-# the Go gate's ExcludeSHA256 and DeltaPin (uc-pxx-installer internal/clone, the
+# the Go gate's ExcludeSHA256 and DeltaPin (uc-pxx-installer mainline-rc-10 6d01ca2 internal/clone, the
 # draft of 2026-11-15); the files here must be byte-identical with the Go side
-GO_EXCLUDE_SHA256 = "ddb397d8dedbd86b3c0cd9d596dfcbad1c6479b60866b543ebeca56142e3d1cc"
+GO_EXCLUDE_SHA256 = "719f4257dce7cbe4c31013220c78e450c624bf623dd75414ab428da4463eaa33"
 GO_DELTA_PIN = "d3044ca39279c866d81543edf70d9d80e8a3220ac41df84ce7d71fbca44a556d"
 
 
@@ -413,6 +413,33 @@ def run(*a):
     return p.returncode, p.stdout + p.stderr
 
 
+def test_keep():
+    print("== contentmanifest: keep (no package of a bundle changes the base) ==")
+    t = tempfile.mkdtemp()
+    C = os.path.join(HERE, "contentmanifest.py")
+    try:
+        base = "/ d 0755 0 0 0 -\n/etc d 0755 0 0 0 -\n/etc/apk/world f 0644 0 0 1 %s\n/usr/sbin/uc-pxx-slot f 0755 0 0 1 %s\n" % ("a" * 64, "b" * 64)
+        open(t + "/base", "w").write(base)
+        ok_other = base.replace("a" * 64, "c" * 64) + "/usr/bin/chromium f 0755 0 0 1 %s\n" % ("d" * 64)
+        open(t + "/ok", "w").write(ok_other)
+        rc, out = run(C, "keep", t + "/base", t + "/ok", "--allow", "/etc/apk/world", "--new-name-prefix", "uc-pxx-")
+        eq(rc, 0, "keep: an allowed change and a new file pass")
+        open(t + "/x", "w").write(base.replace("b" * 64, "e" * 64))
+        rc, out = run(C, "keep", t + "/base", t + "/x", "--allow", "/etc/apk/world")
+        eq((rc, "changed" in out), (1, True), "keep refuses a changed base file (a replaced boot-control file)")
+        open(t + "/x", "w").write(base.replace("/usr/sbin/uc-pxx-slot f 0755 0 0 1 %s\n" % ("b" * 64), ""))
+        rc, out = run(C, "keep", t + "/base", t + "/x")
+        eq((rc, "gone" in out), (1, True), "keep refuses a removed base file")
+        open(t + "/x", "w").write(base + "/usr/sbin/uc-pxx-step2x f 0700 0 0 1 %s\n" % ("f" * 64))
+        rc, out = run(C, "keep", t + "/base", t + "/x", "--new-name-prefix", "uc-pxx-")
+        eq((rc, "reserved name" in out), (1, True), "keep refuses a new uc-pxx-* entry")
+        open(t + "/x", "w").write(base + "/usr/lib/libx.so f 0755 0 0 1 %s\n" % ("9" * 64))
+        rc, out = run(C, "keep", t + "/base", t + "/x", "--new-sha256", "9" * 64)
+        eq((rc, "pinned binary" in out), (1, True), "keep refuses a new file with a pinned binary's sha256")
+    finally:
+        shutil.rmtree(t)
+
+
 def test_bundle():
     print("== bundle.py ==")
     t = tempfile.mkdtemp()
@@ -525,6 +552,11 @@ def test_bundle():
         eq(rc, 1, "check refuses a changed member")
         rc, out = run(B, "check", t + "/b1.tar", "--sha256", "0" * 64)
         eq(rc, 1, "check refuses another pin")
+        rc, out = run(B, "check", t + "/b1.tar", "--index-sha256", "0" * 64)
+        eq(rc, 1, "check refuses another bundle.json pin")
+        rc, out = run(B, "check", t + "/b1.tar", "--index-sha256",
+                      hashlib.sha256(open(t + "/b1.tar.json", "rb").read()).hexdigest())
+        eq(rc, 0, "check takes the bundle.json pin")
         # profiles.json
         for n in ("console", "kiosk"):
             open(t + "/ref-" + n, "w").close()
@@ -538,7 +570,7 @@ def test_bundle():
         p = json.load(open(t + "/profiles.json"))
         eq((p["profiles"]["console"]["bundle"], p["profiles"]["kiosk"]["bundle"]["file"], p["profiles"]["kiosk"]["packages"],
             p["profiles"]["kiosk"]["index_sha256"], p["profiles"]["kiosk"]["build_id"]),
-           (None, "b1.tar", 5, hashlib.sha256(open(t + "/b1.tar.json", "rb").read()).hexdigest(), "0.2.0-rc10-kiosk"),
+           (None, "b1.tar", 5, hashlib.sha256(open(t + "/b1.tar.json", "rb").read()).hexdigest(), "0.2.0-rc10-kiosk\n"),
            "profiles.json: the console and kiosk entries")
         rc, out = run(B, "profiles", "--release", "0.2.0-rc10", "--base-version", "b", "--alpine", "v3.24",
                       "--exclude-sha256", s, "--delta-sha256", s, "--url", "ftp://x/", "--profile",
@@ -562,6 +594,7 @@ def main():
     test_manifest()
     test_installer_vector()
     test_delta()
+    test_keep()
     test_bundle()
     print("%d ok, %d failed" % (N, F))
     return 1 if F else 0

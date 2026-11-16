@@ -15,6 +15,10 @@ assembly and the manifest. docs/mainline-payload.md tells the contract.
   payload.py scan-tar TARGZ
       Refuse a tarball (the rootfs) that holds a Rockchip resource (a file
       that starts with RSCE) or a file with the sha256 of the stock resource.
+  payload.py scan-dir DIR
+      As scan-tar, for a tree (the R23 reference trees, in the build
+      container): no regular file that starts with RSCE or has the sha256 of
+      the stock resource. No link is followed.
   payload.py both-slot ROOTFS_TARGZ INITRAMFS_CPIO SOURCE_DIR [--provision-sha256 SHA]
       Say whether the payload is a both-slot build of SOURCE_DIR (a copy of
       the uc-pxx-linux commit): each boot-control, slot and data file of the
@@ -47,7 +51,8 @@ assembly and the manifest. docs/mainline-payload.md tells the contract.
       the new cap, and that the patched file has the pinned sha256.
       --rootfs-zst F: schema 3, the manifest also pins rootfs.ext4.zst (a
       zstd frame with a window of at most 8 MiB; rootfs pins the unpacked
-      file, which build.sh compares with the unpacked F).
+      file; mkrootfs.sh made F in the build container and compared its
+      unpacked bytes with rootfs.ext4).
 
 Every refusal exits with status 1 and one line "payload: ...". An assembled
 image larger than the boot cap of the patched vbmeta exits with status 3 (the
@@ -386,6 +391,25 @@ def cmd_scan_tar(a):
                 h.update(b)
             if head == b"RSCE" or h.hexdigest() == RESOURCE_SHA256:
                 raise Refuse("%s holds a Rockchip resource: %s" % (a[0], m.name))
+    print("no Rockchip resource in %d files of %s" % (n, a[0]))
+
+
+def cmd_scan_dir(a):
+    n = 0
+    for root, dirs, files in os.walk(a[0]):
+        for f in files:
+            p = os.path.join(root, f)
+            if os.path.islink(p) or not os.path.isfile(p):
+                continue
+            n += 1
+            h = hashlib.sha256()
+            with open(p, "rb") as fh:
+                head = fh.read(4)
+                h.update(head)
+                for b in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(b)
+            if head == b"RSCE" or h.hexdigest() == RESOURCE_SHA256:
+                raise Refuse("%s holds a Rockchip resource: %s" % (a[0], os.path.relpath(p, a[0])))
     print("no Rockchip resource in %d files of %s" % (n, a[0]))
 
 
@@ -846,7 +870,7 @@ def cmd_manifest(a):
 
 def main(argv):
     cmds = {"check-template": (2, cmd_check_template), "split": (2, cmd_split), "initramfs": (2, cmd_initramfs),
-            "scan-tar": (1, cmd_scan_tar), "both-slot": (None, cmd_both_slot),
+            "scan-tar": (1, cmd_scan_tar), "scan-dir": (1, cmd_scan_dir), "both-slot": (None, cmd_both_slot),
             "assemble": (3, cmd_assemble), "manifest": (None, cmd_manifest)}
     if not argv or argv[0] not in cmds:
         sys.stderr.write(__doc__.split("Every refusal")[0])

@@ -51,6 +51,10 @@ r23_refs() {
 	# the files that A must not hold anywhere (DESIGN-R23 §4.4)
 	S2SIZE=$(stat -c %s "$R/$STEP2_BIN_PATH") PSIZE=$(stat -c %s "$R/$PROV_BIN_PATH")
 	FORBID="--forbid uc-pxx-bootctl-inst:777976:$STEP2_INST_SHA256 --forbid uc-pxx-step2:$S2SIZE:$STEP2_BIN_SHA256 --forbid uc-pxx-provision:$PSIZE:$PROV_SHA256"
+	KEEPSHA=
+	for f in "$STEP2_INST_PATH" "$STEP2_BIN_PATH" "$PROV_BIN_PATH" "$XFER_PATH" usr/sbin/uc-pxx-bootctl usr/sbin/uc-pxx-update-boot; do
+		KEEPSHA="$KEEPSHA --new-sha256 $(sha256sum "$R/$f" | cut -d' ' -f1)"
+	done
 	{
 		echo "R23_RELEASE=$R23_REL"
 		echo "BASE_VERSION=${TSX_BUILD_ID:-}"
@@ -98,6 +102,21 @@ r23_refs() {
 		rm -rf "$X/tmp/r23"
 		B=$($PY "$T/contentmanifest.py" build "$X" --exclude "$EXCL" --out "$O/ref-b-$name.manifest" | cut -d' ' -f1) || exit 1
 		[ -n "$B" ] || exit 1
+		# no Rockchip resource in the tree (payload.py scan-tar of the base, here
+		# for every reference; the vendor names: build.sh, ci/check-no-proprietary.sh)
+		$PY "$T/payload.py" scan-dir "$X" || { echo "ERROR: the reference B of $name holds a Rockchip resource"; exit 1; }
+		if [ "$name" != console ]; then
+			# no package of the bundle changes a file of the base (the boot control,
+			# the kernel, the step-2, USB and provisioning sets ...) or adds a uc-pxx-*
+			# name or a pinned binary; only the files that apk and the profile steps
+			# change may differ
+			$PY "$T/contentmanifest.py" keep "$O/ref-b-console.manifest" "$O/ref-b-$name.manifest" \
+				--allow /etc/apk/world --allow /etc/group --allow /etc/group- --allow /etc/passwd --allow /etc/passwd- \
+				--allow /etc/inittab --allow /etc/tsx/profile --allow /lib/apk/db/installed \
+				--allow /lib/apk/db/scripts.tar.gz --allow /lib/apk/db/triggers --allow /lib/apk/db/lock \
+				--new-name-prefix uc-pxx- $KEEPSHA > "$O/keep-$name.txt" || { cat "$O/keep-$name.txt"; echo "ERROR: the bundle of $name changes the base"; exit 1; }
+			cat "$O/keep-$name.txt"
+		fi
 		if [ "$name" = console ]; then
 			cmp -s /build/console-before.manifest "$O/ref-b-$name.manifest" ||
 				{ $PY "$T/contentmanifest.py" diff /build/console-before.manifest "$O/ref-b-$name.manifest"; echo "ERROR: the console profile steps change the base"; exit 1; }

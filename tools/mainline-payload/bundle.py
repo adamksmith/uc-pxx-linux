@@ -28,7 +28,7 @@ deterministic tar. And profiles.json, the base's pinned list of them.
                      --delta-sha256 S --url URL [--url URL ...]
                      --profile NAME:APPLY:REF_B:REF_A:INSTALLED[:BUNDLE_TAR:INDEX_JSON] ... --out FILE
       Write profiles.json.
-  bundle.py check TAR [--sha256 S]
+  bundle.py check TAR [--sha256 S] [--index-sha256 S]
       Read a bundle as the unit does: bundle.json first, each member against
       its line in order, nothing else; print the summary.
 
@@ -394,26 +394,45 @@ def cmd_make(a):
 
 # ---- check (the unit's reading) --------------------------------------------------
 
+SAFE_PATH = re.compile(r"^v[0-9]+\.[0-9]+/(main|community|common|uc-pxx)/aarch64/[A-Za-z0-9][A-Za-z0-9._+~-]*$")
+
+
 def cmd_check(a):
-    o = opts(a[1:], ("--sha256",))
     if not a:
-        raise Refuse("check TAR [--sha256 S]")
+        raise Refuse("check TAR [--sha256 S] [--index-sha256 S]")
+    o = opts(a[1:], ("--sha256", "--index-sha256"))
     with open(a[0], "rb") as raw:
+        head = raw.read(512)
+        if len(head) < 512 or head[257:263] != b"ustar\x00" or head[263:265] != b"00":
+            raise Refuse("not a POSIX ustar archive")
+        raw.seek(0)
         tf = tarfile.open(fileobj=raw, mode="r:", format=tarfile.USTAR_FORMAT)
         first = tf.next()
         if first is None or first.name != "bundle.json" or not first.isreg():
             raise Refuse("the first member is not bundle.json")
         js = tf.extractfile(first).read()
+        if "--index-sha256" in o and hashlib.sha256(js).hexdigest() != o["--index-sha256"]:
+            raise Refuse("bundle.json is %s, the pin is %s" % (hashlib.sha256(js).hexdigest(), o["--index-sha256"]))
         doc = json.loads(js.decode("ascii"))
         if doc.get("schema") != 1 or doc.get("kind") != BUNDLE_KIND:
             raise Refuse("bundle.json: schema %r kind %r" % (doc.get("schema"), doc.get("kind")))
+        if [i["repo"] for i in doc["indexes"]] != [r for r, _ in REPOS] or \
+                [i["path"] for i in doc["indexes"]] != ["%s/%s/%s/APKINDEX.tar.gz" % (doc["alpine"], r, ARCH) for r, _ in REPOS]:
+            raise Refuse("bundle.json: the indexes are not main, community, common, uc-pxx")
+        paths = [p["path"] for p in doc["packages"]]
+        if paths != sorted(paths) or len(set(paths)) != len(paths):
+            raise Refuse("bundle.json: the packages are not sorted by path, or a path is there twice")
+        for p in doc["packages"]:
+            if not SAFE_PATH.match(p["path"]) or p["path"] != "%s/%s/%s/%s-%s.apk" % (doc["alpine"], p["repo"], ARCH, p["name"], p["version"]):
+                raise Refuse("bundle.json: the path %r" % p["path"])
         want = [(i["path"], i["size"], i["sha256"]) for i in doc["indexes"]]
         want += [(p["path"], p["size"], p["sha256"]) for p in doc["packages"]]
         if doc.get("lva"):
             want.append((doc["lva"]["path"], doc["lva"]["size"], doc["lva"]["sha256"]))
         for path, size, sha in want:
             m = tf.next()
-            if m is None or m.name != path or not m.isreg() or m.size != size or m.mode != 0o644 or m.uid or m.gid or m.mtime:
+            if (m is None or m.name != path or not m.isreg() or m.size != size or m.mode != 0o644 or m.uid or m.gid
+                    or m.mtime or m.uname or m.gname):
                 raise Refuse("member %r is not the next line %s (%d bytes)" % (m and m.name, path, size))
             h = hashlib.sha256()
             f = tf.extractfile(m)
@@ -459,7 +478,7 @@ def cmd_profiles(a):
         for s in (refb, refa, inst):
             if not SHA_RE.match(s):
                 raise Refuse("--profile %r: %r is not a sha256" % (spec, s))
-        ent = {"apply": apply, "build_id": "%s-%s" % (o["--release"], name), "ref_b_sha256": refb,
+        ent = {"apply": apply, "build_id": "%s-%s\n" % (o["--release"], name), "ref_b_sha256": refb,
                "ref_a_sha256": refa, "installed_sha256": inst, "bundle": None, "index_sha256": None, "packages": 0}
         if len(w) == 7:
             if name == "console":

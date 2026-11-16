@@ -21,6 +21,16 @@
       that mkrootfs.sh writes). No symbolic link is followed.
   contentmanifest.py diff A B [--max N]
       The lines only in A ("- ") and only in B ("+ "), sorted (at most N, 200).
+  contentmanifest.py keep BASE OTHER [--allow PATH ...] [--new-name-prefix P ...]
+                     [--new-sha256 SHA ...]
+      OTHER (a reference B) must hold every line of BASE (the base) unchanged,
+      except the lines of the --allow paths (the files that the profile steps
+      and apk change: world, passwd, the apk db, inittab, the profile marker).
+      A line of OTHER that BASE lacks must not have a last component that
+      starts with a --new-name-prefix, nor (a file) a --new-sha256. So no
+      package of a bundle replaces a file of the base (the boot control, the
+      kernel, the step-2, USB and provisioning sets) or adds one of those
+      names or binaries.
 
 The format (the same as uc-pxx-installer internal/clone/manifest.go):
 
@@ -514,8 +524,64 @@ def cmd_diff(a):
     return 0 if not out else 3
 
 
+def parse_line(l):
+    """(raw path bytes, line) of a manifest line."""
+    esc = l.split(" ", 1)[0]
+    out, i = bytearray(), 0
+    while i < len(esc):
+        if esc[i] == "\\" and esc[i + 1:i + 2] == "x":
+            out.append(int(esc[i + 2:i + 4], 16))
+            i += 4
+        else:
+            out.append(ord(esc[i]))
+            i += 1
+    return bytes(out), l
+
+
+def cmd_keep(a):
+    if len(a) < 2:
+        raise Refuse("keep BASE OTHER [--allow PATH ...] [--new-name-prefix P ...] [--new-sha256 SHA ...]")
+    allow, pre, shas, i = set(), [], set(), 2
+    while i < len(a):
+        if a[i] not in ("--allow", "--new-name-prefix", "--new-sha256") or i + 1 >= len(a):
+            raise Refuse("keep: unknown or incomplete option %s" % a[i])
+        v = a[i + 1]
+        if a[i] == "--allow":
+            allow.add(os.fsencode(v))
+        elif a[i] == "--new-name-prefix":
+            pre.append(os.fsencode(v))
+        else:
+            shas.add(v)
+        i += 2
+    with open(a[0], "rb") as f:
+        base = dict(parse_line(l) for l in f.read().decode("ascii").splitlines())
+    with open(a[1], "rb") as f:
+        other = dict(parse_line(l) for l in f.read().decode("ascii").splitlines())
+    bad = []
+    for p, l in base.items():
+        if p in allow:
+            continue
+        if other.get(p) != l:
+            bad.append("base %s: %s" % ("changed" if p in other else "gone", l))
+    for p, l in other.items():
+        if p in base:
+            continue
+        w = l.split(" ")
+        if any(p.rsplit(b"/", 1)[-1].startswith(x) for x in pre):
+            bad.append("a new entry with a reserved name: " + l)
+        if w[1] == "f" and w[6] in shas:
+            bad.append("a new file with a pinned binary's sha256: " + l)
+    for b in bad[:40]:
+        print(b)
+    if bad:
+        raise Refuse("%d lines: %s does not keep the base %s" % (len(bad), a[1], a[0]))
+    print("keeps the base: %d base lines (%d allowed to change), %d new lines" % (len(base), len(allow & set(base)), len(set(other) - set(base))))
+    return 0
+
+
 def main(argv):
-    cmds = {"build": cmd_build, "exclude-sha256": cmd_exclude_sha, "apply-delta": cmd_apply_delta, "diff": cmd_diff}
+    cmds = {"build": cmd_build, "exclude-sha256": cmd_exclude_sha, "apply-delta": cmd_apply_delta, "diff": cmd_diff,
+            "keep": cmd_keep}
     if not argv or argv[0] not in cmds:
         sys.stderr.write(__doc__.split("The format")[0])
         return 2

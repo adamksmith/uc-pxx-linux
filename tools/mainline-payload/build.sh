@@ -125,14 +125,15 @@
 #             GitHub release mainline-rc-10 of uc-pxx-installer).
 # --expect-refs  a refs.txt of an earlier build (the two-stage order of
 #             DESIGN-R23 §7.2: ref_a goes into step 2's gate before the base is
-#             built with that step 2): every line that the file has must be
-#             the same in this build's refs.txt, or the build stops (exit 1).
-#             Lines whose key starts with REF_B_ or is PROFILES_JSON are not
-#             compared (ref_b covers the step-2 binary).
+#             built with that step 2): the same keys, each with the same value
+#             as this build's refs.txt, or the build stops (exit 1). ref_b is
+#             compared too: with an exclusion list that leaves out the files
+#             that name the step-2 and provision binaries, it does not depend
+#             on them (R23-FORMATS §9.1).
 #
 # The inputs file: one KEY=VALUE per line, "#" lines are comments, each key
 # once, no other key:
-#   FORMAT              uc-pxx-mainline-payload-inputs-6
+#   FORMAT              uc-pxx-mainline-payload-inputs-8
 #   VERSION             the version of the manifest: a release tag or dev-<commit>
 #   SOURCE_DATE_EPOCH   seconds
 #   UC_PXX_LINUX_COMMIT HEAD of this checkout (a clean tree)
@@ -519,14 +520,24 @@ if [ -n "$PVBIN" ]; then
 	[ -f "$RO/r23/refs.txt" ] && [ -f "$RO/rootfs.ext4.zst" ] || die "the R23 base build made no r23/refs.txt or rootfs.ext4.zst"
 	cp -a "$RO/r23" "$OUT/r23"
 	if [ -n "$EXPREFS" ]; then
+		# the same keys, each with the same value (every line of both files)
+		[ "$(grep -v '^#' "$EXPREFS" | sed 's/=.*//' | sort)" = "$(sed 's/=.*//' "$OUT/r23/refs.txt" | sort)" ] ||
+			die "--expect-refs: $EXPREFS has other keys than this build's r23/refs.txt"
 		n=0
 		while IFS= read -r l || [ -n "$l" ]; do
-			case $l in ''|'#'*) continue;; REF_B_*|PROFILES_JSON=*) continue;; esac
+			case $l in ''|'#'*) continue;; esac
 			grep -qxF -- "$l" "$OUT/r23/refs.txt" || die "--expect-refs: '$l' is not in this build's refs.txt (r23/refs.txt)"
 			n=$((n + 1))
 		done < "$EXPREFS"
-		echo "--expect-refs: $n lines equal ($EXPREFS)"
+		echo "--expect-refs: all $n lines equal ($EXPREFS)"
 	fi
+	# no vendor file in a reference tree (the names of every reference manifest)
+	for m in "$OUT"/r23/ref-*.manifest; do
+		cut -d' ' -f1 "$m" > "$W/names.txt"
+		sh "$W/src/ci/check-no-proprietary.sh" --names "$W/names.txt" "$(basename "$m")" > "$W/no-proprietary-r23.log" 2>&1 ||
+			{ cat "$W/no-proprietary-r23.log"; die "a reference tree holds a vendor file ($m)"; }
+	done
+	echo "no vendor file names in the reference manifests"
 	grep -E '^(REF_|BUNDLE_|INDEX_|PROFILES_JSON)' "$OUT/r23/refs.txt"
 fi
 

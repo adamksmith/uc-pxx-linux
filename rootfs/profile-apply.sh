@@ -116,7 +116,7 @@ if [ "$ROOT" != / ]; then
 	A=
 	if [ -n "$LVA" ]; then cp "$LVA" "$S/lva.tar"; A="--lva $rel/lva.tar"; fi
 	# shellcheck disable=SC2086 # empty or two words
-	if chroot "$ROOT" /bin/sh "$rel/set/profile-apply.sh" "$P" / $A; then rc=0; else rc=$?; fi
+	if env -u TSX_PROFILE_DIR -u TSX_OVERLAY_DIR chroot "$ROOT" /bin/sh "$rel/set/profile-apply.sh" "$P" / $A; then rc=0; else rc=$?; fi
 	rm -rf "$S"
 	exit $rc
 fi
@@ -237,6 +237,9 @@ for f in $(image_files); do
 	if [ -e "$PD/$P/overlay/$f" ]; then src=$PD/$P/overlay/$f
 	elif [ -e "$OV/$f" ]; then src=$OV/$f
 	else
+		# only the profile marker may be missing (the ha profile has none);
+		# never remove another file of the image (fstab, inittab)
+		[ "$f" = etc/tsx/profile ] || die "no source for /$f in the $P profile"
 		if [ -e "/$f" ] || [ -L "/$f" ]; then rm -f "/$f"; log "removed /$f (the $P profile has none)"; fi
 		continue
 	fi
