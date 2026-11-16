@@ -753,8 +753,11 @@ apk info --root $R -v 2>/dev/null | sort > "$OUT/rootfs.manifest"
 	apk info --root $R -s $(apk info --root $R 2>/dev/null) 2>/dev/null | awk '
 		/ installed size:$/ {p=$1; sub(/-[0-9].*$/, "", p); next}
 		NF==2 && p != "" {v=$1; u=$2; if (u=="KiB") v/=1024; if (u=="GiB") v*=1024; if (u=="B") v/=1048576; printf "%8.1f MiB  %s\n", v, p; p=""}' | sort -rn | head -25
-	echo "largest directories:"
-	du -xm -d 3 $R/usr $R/lib $R/opt 2>/dev/null | sort -rn | head -15 | sed "s|$R||"
+	# the apparent sizes (du -b): the blocks that the build host's file system
+	# gives a folder's files vary by a fraction of a MiB between two builds
+	# (RC-10 release: 21 and 22 MiB for /usr/libexec), the file sizes do not
+	echo "largest directories (apparent size):"
+	du -b -xm -d 3 $R/usr $R/lib $R/opt 2>/dev/null | sort -k1,1rn -k2 | head -15 | sed "s|$R||"
 	echo "profile: $PROFILE"
 	if [ "$DEV" = 1 ]; then echo "image source: TEST BUILD (UC_PXX_DEV_OVERLAY=1), common packages and the repository files"
 	else echo "image source: packages (uc-pxx-$PROFILE)"; fi
