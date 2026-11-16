@@ -1,0 +1,11 @@
+# /etc/conf.d/uc-pxx-provision: the first-boot provisioning service (R23 base
+# build only). The program reads this file.
+# UC_PXX_PROVISION_PROFILES: the release's pinned profile list (a file of the
+# base rootfs, so pinned by the base's rootfs sha256).
+UC_PXX_PROVISION_PROFILES=/usr/share/uc-pxx-provision/profiles.json
+# UC_PXX_PROVISION_APPLY: the profile steps (profile-apply.sh PROFILE /).
+UC_PXX_PROVISION_APPLY=/usr/share/uc-pxx-provision/profile-apply.sh
+# UC_PXX_PROVISION_USB=yes: the page's PROVISION COMMIT (and, with source
+# "cable", the bundle) comes over the slot's USB link (uc-pxx-xfer kind
+# provision).
+UC_PXX_PROVISION_USB=yes

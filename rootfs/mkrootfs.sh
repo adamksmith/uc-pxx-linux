@@ -62,6 +62,22 @@
 #               step 2 of the mainline install (MAINLINE-STEP2-DESIGN Q-S8).
 #               Without it the build stops when any file of that name is in
 #               the image. A step-2 image is for no unit before its RULES line
+#   UC_PXX_PROVISION_BIN  optional, with a STEP-2 build of the console
+#               profile only: the uc-pxx-provision binary (uc-pxx-installer
+#               cmd/uc-pxx-provision) of an R23 BASE build (DESIGN-R23 §3, §7.2).
+#               Its sha256 is an input: UC_PXX_PROVISION_SHA256 (required with
+#               it). The image then has the provisioning set: the binary at
+#               /usr/libexec/uc-pxx-provision/uc-pxx-provision (root, 0700, the
+#               folder 0700), the OpenRC service uc-pxx-provision
+#               (rootfs/provision/, default runlevel) and its conf, and
+#               /usr/share/uc-pxx-provision/ (profile-apply.sh, profile.sh,
+#               profiles/, overlay/, profiles.json). rootfs/r23-refs.sh builds
+#               the reference trees, their content manifests and the profile
+#               bundles from this base, and writes profiles.json. Needs
+#               UC_PXX_R23_RELEASE (the release, e.g. 0.2.0-rc10),
+#               UC_PXX_PROVISION_URLS (the base URLs of the bundles, separated by
+#               spaces) and a local MIRROR (the snapshot). For no unit before
+#               its RULES lines
 #   UC_PXX_DEV_APK_KEY  TEST ONLY: the public key NAME.rsa.pub of a private
 #               build of uc-pxx packages (a local apk tree signed on the build
 #               host). It is trusted for the package install only. The image
@@ -162,25 +178,30 @@ if [ -n "${UC_PXX_DEV_APK_KEY:-}" ]; then
 	log "TEST BUILD (UC_PXX_DEV_APK_KEY): packages signed by $DEVKEY ($DEVKEY_SHA) are trusted for this install only"
 fi
 # The profile picks the packages (profiles/*.list). The lines keep the order
-# of packages.txt and packages-tsx.txt.
-PKGS=$(sh "$HERE/profile.sh" packages "$PROFILE" "$HERE/packages.txt" | tr '\n' ' ')
-TSXPKGS=$(sh "$HERE/profile.sh" packages "$PROFILE" "$HERE/packages-tsx.txt" | tr '\n' ' ')
-# The profile meta package pulls the packages that hold the panel software.
-if [ "$DEV" = 1 ]; then
-	# no uc-pxx packages: the common packages that the meta package will pull
-	TSXPKGS=$(printf '%s\n' $TSXPKGS | grep -v '^uc-pxx-' | tr '\n' ' ')
-	for l in $(sh "$HERE/profile.sh" includes "$PROFILE"); do
-		TSXPKGS="$TSXPKGS $(awk -v p="$l" '$1 == p { print $2 }' "$HERE/dev/common-packages.list" | tr '\n' ' ')"
-	done
-else
-	TSXPKGS="$TSXPKGS uc-pxx-$PROFILE"
-fi
-log "tsx-aports packages from $TSX_APK_LOCAL: $TSXPKGS"
-# uc-pxx-chromium (if listed) provides chromium, so Alpine chromium stays out
-if printf '%s\n' $TSXPKGS | grep -qx uc-pxx-chromium; then
-	PKGS=$(sh "$HERE/profile.sh" packages "$PROFILE" "$HERE/packages.txt" | grep -vx chromium | tr '\n' ' ')
-fi
-PKGS="$PKGS $TSXPKGS"
+# of packages.txt and packages-tsx.txt. profile_pkgs PROFILE: the names that
+# `apk add` gets for that profile (the R23 references use it for the other
+# profiles, rootfs/r23-refs.sh).
+profile_pkgs() {
+	_a=$(sh "$HERE/profile.sh" packages "$1" "$HERE/packages.txt" | tr '\n' ' ')
+	_t=$(sh "$HERE/profile.sh" packages "$1" "$HERE/packages-tsx.txt" | tr '\n' ' ')
+	# The profile meta package pulls the packages that hold the panel software.
+	if [ "$DEV" = 1 ]; then
+		# no uc-pxx packages: the common packages that the meta package will pull
+		_t=$(printf '%s\n' $_t | grep -v '^uc-pxx-' | tr '\n' ' ')
+		for l in $(sh "$HERE/profile.sh" includes "$1"); do
+			_t="$_t $(awk -v p="$l" '$1 == p { print $2 }' "$HERE/dev/common-packages.list" | tr '\n' ' ')"
+		done
+	else
+		_t="$_t uc-pxx-$1"
+	fi
+	# uc-pxx-chromium (if listed) provides chromium, so Alpine chromium stays out
+	if printf '%s\n' $_t | grep -qx uc-pxx-chromium; then
+		_a=$(sh "$HERE/profile.sh" packages "$1" "$HERE/packages.txt" | grep -vx chromium | tr '\n' ' ')
+	fi
+	echo $_a $_t
+}
+PKGS=$(profile_pkgs "$PROFILE")
+log "packages: $PKGS"
 : > /build/repositories
 for c in $TSX_CATS; do printf '%s/%s/%s\n' "$TSX_APK_LOCAL" "$ALPINE" "$c" >> /build/repositories; done
 cat /etc/apk/repositories >> /build/repositories
@@ -307,10 +328,31 @@ if [ -d $R/usr/share/tsx/splash ] && [ -n "${UC_PXX_SPLASH_SIZES:-}" ]; then
 	rm -rf /build/board-splash
 fi
 
-log "image files ($PROFILE)"
-# The packages own the files of the panel software. The image keeps only its
-# own files (profiles/image.list).
-sh "$HERE/profile.sh" stage "$PROFILE" $R
+# The profile steps (DESIGN-R23 §3.5): rootfs/profile-apply.sh, the same
+# script that the R23 references and the unit (uc-pxx-provision) run after
+# their own package install. It runs in the tree under chroot, with the tools
+# of the tree: /opt/lva of the ha profile (rootfs/lva-build.sh: install-lva.sh
+# of the package tsx-ha, packed into a reproducible lva.tar), the owner of
+# /etc and /usr/local, the shared library check, the users, the hostname, the
+# trim, the fontconfig caches, the files of profiles/image.list (fstab,
+# inittab, the profile marker; the packages own all other files) and the
+# services of the profile.
+LVAARG=
+if has step lva; then
+	log "Home Assistant device (tsx-esphome) and voice satellite (linux-voice-assistant)"
+	sh "$HERE/lva-build.sh" $R /build/lva.tar
+	LVAARG="--lva /build/lva.tar"
+fi
+log "the profile steps ($PROFILE)"
+# shellcheck disable=SC2086 # empty or two words
+sh "$HERE/profile-apply.sh" "$PROFILE" $R $LVAARG
+if [ "$DEV" = 1 ]; then
+	# The published tsx-autoupdate has no board hook. An update must arm slot A
+	# first (uc-pxx-arm-slot, docs/boot-control.md "The update rule"). So a
+	# DEV image does not start it.
+	rm -f $R/etc/runlevels/default/tsx-autoupdate
+	log "DEV: tsx-autoupdate is not started (no board hook in the published common packages)"
+fi
 # The fstab of this repository has no /data line (review F7): the service
 # uc-pxx-lvm of the package uc-pxx-board mounts /data by device (its line
 # "# uc-pxx-data-mount: 1"). An older package only activates the LVM volume
@@ -349,83 +391,8 @@ printf '%s\n' "${TSX_BUILD_ID:-$(date -u +%Y%m%d%H%M)}" > $R/etc/tsx/build-id
 # boots earlier than its build time (/etc/periodic/15min/tsx-savetime keeps
 # the file current while NTP has the time)
 mkdir -p $R/var/lib/misc && touch $R/var/lib/misc/openrc-shutdowntime
-if has step lva; then
-log "Home Assistant device (tsx-esphome) and voice satellite (linux-voice-assistant)"
-# The TensorFlow Lite C library for the wake word models comes from the
-# tensorflow-lite-c package (tsx-aports, packages-tsx.txt). The package tsx-ha
-# ships install-lva.sh and the ESPHome shim. The script copies the shim from
-# the directory next to it, and it first deletes /opt/lva. So run it from a
-# copy of both. The script downloads pinned Python wheels, so a package cannot
-# hold its result. No panel runs it.
-[ -x $R/usr/share/tsx/install-lva.sh ] || { echo "the tsx-ha package did not install /usr/share/tsx/install-lva.sh"; exit 1; }
-rm -rf /build/lva-src; mkdir -p /build/lva-src
-cp $R/usr/share/tsx/install-lva.sh /build/lva-src/
-cp -a $R/opt/lva/shim /build/lva-src/shim
-ARCH=aarch64 LVA_CACHE=$CACHE TFLITE_SO=/usr/lib/libtensorflowlite_c.so sh /build/lva-src/install-lva.sh $R
-fi
-chown -R 0:0 $R/etc $R/usr/local
-
-# every binary of the packages must find its shared libraries in the image
-# (a package missing from packages.txt only shows up on the panel otherwise:
-# "Error loading shared library")
-log "shared library check"
-BINS="/usr/local/sbin/tsx-idled /usr/local/bin/tsx-splash"
-has svc kiosk && BINS="$BINS /usr/local/bin/tsx-overlay"
-[ -x $R/usr/bin/sendspin-cli ] && BINS="$BINS /usr/bin/sendspin-cli"
-for bin in $BINS; do
-	out=$(chroot $R /lib/ld-musl-aarch64.so.1 --list "$bin" 2>&1) || true
-	if printf '%s\n' "$out" | grep -qE 'Error (loading|relocating)|not found'; then
-		printf '%s\n' "$out" | head -n 5
-		echo "ERROR: $bin: missing shared libraries (add the package to packages.txt)"; exit 1
-	fi
-done
-
-log "users, services"
-# The profile decides which services start and which users exist. The lists
-# are in profiles/*.list. The chroot shell reads them from its environment.
-TSX_SVC_SYSINIT=$(sh "$HERE/profile.sh" entries "$PROFILE" svc | awk '$1 == "sysinit" { print $2 }' | tr '\n' ' ')
-TSX_SVC_BOOT=$(sh "$HERE/profile.sh" entries "$PROFILE" svc | awk '$1 == "boot" { print $2 }' | tr '\n' ' ')
-TSX_SVC_DEFAULT=$(sh "$HERE/profile.sh" entries "$PROFILE" svc | awk '$1 == "default" { print $2 }' | tr '\n' ' ')
-if [ "$DEV" = 1 ]; then
-	# The published tsx-autoupdate has no board hook. An update must arm slot A
-	# first (uc-pxx-arm-slot, docs/boot-control.md "The update rule"). So a
-	# DEV image does not start it.
-	TSX_SVC_DEFAULT=$(printf '%s\n' $TSX_SVC_DEFAULT | grep -vx tsx-autoupdate | tr '\n' ' ')
-	log "DEV: tsx-autoupdate is not started (no board hook in the published common packages)"
-fi
-TSX_USERS=$(sh "$HERE/profile.sh" entries "$PROFILE" user | tr '\n' ' ')
-case "$PROFILE" in console) TSX_HOSTNAME=tsx-console;; *) TSX_HOSTNAME=tsx-kiosk;; esac
-export TSX_SVC_SYSINIT TSX_SVC_BOOT TSX_SVC_DEFAULT TSX_USERS TSX_HOSTNAME
+log "crontab, sshd"
 chroot $R /bin/sh -e <<'CH'
-case " $TSX_USERS " in *" kiosk "*)
-	addgroup -S seat 2>/dev/null || true
-	addgroup -S render 2>/dev/null || true
-	# The package tsx-kiosk makes this user in its pre-install script.
-	getent passwd kiosk >/dev/null || adduser -D -H -h /var/lib/kiosk -s /sbin/nologin -g "kiosk browser" kiosk
-	for g in video input seat render audio; do addgroup kiosk $g 2>/dev/null || true; done
-	mkdir -p /var/lib/kiosk && chown kiosk:kiosk /var/lib/kiosk;;
-esac
-# on-panel setup page (docs/rootfs.md "Setup page"): deliberately its OWN
-# unprivileged user, not "kiosk" -- it parses HTTP from the LAN before any
-# pairing has happened, a smaller and different trust boundary than the
-# always-unsandboxed browser, and it never needs kiosk's video/input group
-# access. It has no home directory and talks to root only through tsx-setup-helper's
-# FIFOs (group tsx-setup, created by that service).
-case " $TSX_USERS " in *" tsx-setup "*)
-	getent passwd tsx-setup >/dev/null || adduser -D -H -s /sbin/nologin -g "on-panel setup page" tsx-setup;;
-esac
-for s in devfs dmesg udev udev-trigger udev-settle $TSX_SVC_SYSINIT; do
-	[ -e /etc/init.d/$s ] && rc-update add $s sysinit || { echo "MISSING sysinit service $s"; exit 1; }
-done
-for s in root localmount modules sysctl hostname bootmisc syslog hwclock seedrng udev-postmount machine-id $TSX_SVC_BOOT; do
-	[ -e /etc/init.d/$s ] && rc-update add $s boot || { echo "MISSING boot service $s"; exit 1; }
-done
-for s in $TSX_SVC_DEFAULT; do
-	[ -e /etc/init.d/$s ] && rc-update add $s default || { echo "MISSING service $s"; exit 1; }
-done
-for s in mount-ro killprocs savecache; do rc-update add $s shutdown; done
-echo "$TSX_HOSTNAME" > /etc/hostname
-printf '127.0.0.1\tlocalhost %s\n::1\t\tlocalhost\n' "$TSX_HOSTNAME" > /etc/hosts
 mkdir -p /etc/crontabs && touch /etc/crontabs/root
 # ssh: root with password or key (change on deploy, panel.conf
 # ROOT_PASSWORD_HASH / SSH_AUTHORIZED_KEY)
@@ -460,19 +427,7 @@ log "trim"
 # empty: OpenRC's machine-id service (boot runlevel) fills an empty one once,
 # on each unit's first boot.
 : > $R/etc/machine-id
-# Chromium UI locales: keep en-US only
-[ -d $R/usr/lib/chromium/locales ] && find $R/usr/lib/chromium/locales -name '*.pak' ! -name 'en-US.pak' -delete
-# man pages / doc / info: never read on a headless kiosk
-rm -rf $R/usr/share/man $R/usr/share/doc $R/usr/share/info
-# apk's own index cache. It is cleared again before the tarball
-rm -rf $R/var/cache/apk/* $R/lib/apk/db/scripts.tar
-[ -d $R/usr/share/locale ] && find $R/usr/share/locale -mindepth 1 -maxdepth 1 -type d ! -name 'en*' ! -name C -exec rm -rf {} +
-# sway-wallpapers: install_if-bound to sway, unused (the kiosk's background
-# is the boot splash, usr/local/bin/kiosk-session)
-rm -rf $R/usr/share/backgrounds/sway
-# python bytecode caches: the -pyc subpackages are install_if-bound to
-# python3; the interpreter recompiles at the first import
-find $R/usr/lib/python3* -depth \( -type d -name '__pycache__' -o -type f -name '*.pyc' \) -exec rm -rf {} +
+# (the rest of the trim is a profile step: profile-apply.sh)
 
 # Kernel modules. The kernel packages own the trees in /lib/modules. A release
 # build (.github/workflows/release.yml) also stages the modules of the kernel
@@ -708,6 +663,59 @@ else
 	[ -z "$s2" ] || { echo "ERROR: the image has files of step 2 ($s2) without UC_PXX_STEP2_BOOTCTL_INST"; exit 1; }
 fi
 
+# The provisioning set of an R23 BASE build (DESIGN-R23 §3, §7.2;
+# UC_PXX_PROVISION_BIN, off by default). The base is the console profile with
+# the step-2 set and the USB set; its first boot installs the chosen profile
+# (Kiosk + Home Assistant, Kiosk only, or nothing for Console only) from one
+# pinned bundle (uc-pxx-provision of uc-pxx-installer, its sha256 an input:
+# UC_PXX_PROVISION_SHA256). The set:
+#   /usr/libexec/uc-pxx-provision/uc-pxx-provision (root, 0700, the folder 0700),
+#   the OpenRC service uc-pxx-provision (rootfs/provision/, default runlevel)
+#     and its conf file,
+#   /usr/share/uc-pxx-provision/: profile-apply.sh, profile.sh, profiles/ and
+#     overlay/ (profile-apply.sh --install-set: the profile steps that the unit
+#     runs), and profiles.json (the pinned bundles and reference manifests,
+#     written by rootfs/r23-refs.sh below).
+# Step 2's difference (tools/mainline-payload/r23/clone-delta.json) removes the
+# whole set from slot A. Without UC_PXX_PROVISION_BIN the image has no file of
+# these names. Such an image is for no unit before its RULES lines.
+PROV_BIN_PATH=usr/libexec/uc-pxx-provision/uc-pxx-provision
+PROV_FILES="etc/conf.d/uc-pxx-provision etc/init.d/uc-pxx-provision etc/runlevels/default/uc-pxx-provision usr/libexec/uc-pxx-provision $PROV_BIN_PATH usr/share/uc-pxx-provision "
+PROV_SHA256=
+if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
+	PROV_SHA256=${UC_PXX_PROVISION_SHA256:-}
+	case $PROV_SHA256 in *[!0-9a-f]*|'') echo "ERROR: UC_PXX_PROVISION_BIN needs UC_PXX_PROVISION_SHA256 (64 lower-case hex digits)"; exit 1;; esac
+	[ ${#PROV_SHA256} = 64 ] || { echo "ERROR: UC_PXX_PROVISION_SHA256 is not 64 hex digits"; exit 1; }
+	sum=$(sha256sum "$UC_PXX_PROVISION_BIN" | cut -d' ' -f1)
+	[ "$sum" = "$PROV_SHA256" ] || { echo "ERROR: UC_PXX_PROVISION_BIN has sha256 $sum, the input pin is $PROV_SHA256"; exit 1; }
+	[ "$PROFILE" = console ] || { echo "ERROR: an R23 base (UC_PXX_PROVISION_BIN) is the console profile, not $PROFILE"; exit 1; }
+	[ "$DEV" != 1 ] || { echo "ERROR: an R23 base is built from the packages (not UC_PXX_DEV_OVERLAY)"; exit 1; }
+	[ -n "${UC_PXX_STEP2_BOOTCTL_INST:-}" ] && [ -n "${UC_PXX_XFER_BIN:-}" ] ||
+		{ echo "ERROR: an R23 base is a STEP-2 build with the USB set (UC_PXX_STEP2_BOOTCTL_INST, UC_PXX_XFER_BIN)"; exit 1; }
+	[ -n "${UC_PXX_R23_RELEASE:-}" ] && [ -n "${UC_PXX_PROVISION_URLS:-}" ] ||
+		{ echo "ERROR: an R23 base needs UC_PXX_R23_RELEASE and UC_PXX_PROVISION_URLS"; exit 1; }
+	install -d -m 700 -o 0 -g 0 $R/usr/libexec/uc-pxx-provision
+	install -m 700 -o 0 -g 0 "$UC_PXX_PROVISION_BIN" "$R/$PROV_BIN_PATH"
+	[ "$(sha256sum "$R/$PROV_BIN_PATH" | cut -d' ' -f1)" = "$PROV_SHA256" ] || { echo "ERROR: uc-pxx-provision changed in the copy"; exit 1; }
+	install -D -m 755 -o 0 -g 0 "$HERE/provision/init.d/uc-pxx-provision" $R/etc/init.d/uc-pxx-provision
+	install -D -m 644 -o 0 -g 0 "$HERE/provision/conf.d/uc-pxx-provision" $R/etc/conf.d/uc-pxx-provision
+	ln -sf /etc/init.d/uc-pxx-provision $R/etc/runlevels/default/uc-pxx-provision
+	sh "$HERE/profile-apply.sh" --install-set $R/usr/share/uc-pxx-provision
+	log "the provisioning set: uc-pxx-provision $PROV_SHA256, the service uc-pxx-provision, /usr/share/uc-pxx-provision"
+fi
+prov=$(cd $R && find . -name 'uc-pxx-provision*' | sed 's#^\./##' | sort | tr '\n' ' ')
+if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
+	[ "$prov" = "$PROV_FILES" ] || { echo "ERROR: the provisioning set in the image is '$prov', not exactly '$PROV_FILES'"; exit 1; }
+	[ "$(cd $R && find usr/libexec/uc-pxx-provision | sort | tr '\n' ' ')" = "usr/libexec/uc-pxx-provision $PROV_BIN_PATH " ] ||
+		{ echo "ERROR: other files in /usr/libexec/uc-pxx-provision"; exit 1; }
+	# no copy of the binary under another name
+	psize=$(stat -c %s "$R/$PROV_BIN_PATH")
+	cpp=$(cd $R && find . -type f -size "${psize}c" -exec sha256sum {} + | awk -v a="$PROV_SHA256" -v pa="./$PROV_BIN_PATH" '$1 == a && $2 != pa { print $2 }' | tr '\n' ' ')
+	[ -z "$cpp" ] || { echo "ERROR: copies of uc-pxx-provision in the image: $cpp"; exit 1; }
+else
+	[ -z "$prov" ] || { echo "ERROR: the image has files of the provisioning set ($prov) without UC_PXX_PROVISION_BIN"; exit 1; }
+fi
+
 log "manifest and sizes"
 mkdir -p "$OUT"
 apk info --root $R -v 2>/dev/null | sort > "$OUT/rootfs.manifest"
@@ -724,7 +732,7 @@ apk info --root $R -v 2>/dev/null | sort > "$OUT/rootfs.manifest"
 	else echo "image source: packages (uc-pxx-$PROFILE)"; fi
 	[ -z "$DEVKEY" ] || echo "image source: TEST BUILD, the uc-pxx packages signed by $DEVKEY (sha256 $DEVKEY_SHA), not published"
 	echo "root password: $ROOT_PW_RESULT"
-	echo "tsx-aports: installed from a local tree: $TSXPKGS"
+	echo "packages (apk add): $PKGS"
 	echo "tsx-aports: panel repository URL $TSX_APK_URL/$ALPINE/{common,uc-pxx}"
 	ls $R/lib/modules 2>/dev/null | sed 's/^/kernel modules: /'
 } > "$OUT/rootfs.sizes"
@@ -737,6 +745,23 @@ rm -rf $R/var/cache/apk/*
 # step can leave its log. A panel makes a new log at its first start, so the
 # image ships with none.
 rm -f $R/var/log/tsx-idled.log
+
+# The R23 references (rootfs/r23-refs.sh, DESIGN-R23 §4.6, §7.2): from this
+# base, for each profile, the reference B (the bundle installed by the base's
+# own apk, the profile steps by the base's own profile-apply.sh) and the
+# reference A (B with step 2's difference), their content manifests, the
+# profile bundles, then profiles.json into the base.
+if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
+	. "$HERE/r23-refs.sh"
+	r23_refs
+	[ -f $R/usr/share/uc-pxx-provision/profiles.json ] || { echo "ERROR: no profiles.json"; exit 1; }
+	# the folder holds exactly the set and profiles.json
+	sh "$HERE/profile-apply.sh" --install-set /build/set-check
+	want=$(cd /build/set-check && { find . ; echo ./profiles.json; } | sort | tr '\n' ' ')
+	got=$(cd $R/usr/share/uc-pxx-provision && find . | sort | tr '\n' ' ')
+	[ "$want" = "$got" ] || { echo "ERROR: /usr/share/uc-pxx-provision is '$got', not '$want'"; exit 1; }
+	rm -rf /build/set-check
+fi
 
 if [ -n "$SDE" ]; then
 	log "reproducible tree (SOURCE_DATE_EPOCH $SDE)"
@@ -757,15 +782,7 @@ if [ -n "$SDE" ]; then
 		! grep '^Running `apk ' $L | grep -v -F "\` at $STAMP" | grep -q . ||
 			{ echo "ERROR: $L has a run with another time"; grep '^Running' $L; exit 1; }
 	fi
-	# install-lva.sh builds pymicro-features from its sdist in a pip folder
-	# with a random name. The debug info and the build id of that library name
-	# the folder. Remove them (the panel never needs them).
-	find $R/opt/lva -type f -name '*.so' 2>/dev/null | sort | while read -r f; do
-		grep -q -F 'pip-req-build-' "$f" || continue
-		strip --strip-debug --remove-section=.note.gnu.build-id "$f"
-		grep -q -F 'pip-req-build-' "$f" && { echo "ERROR: $f still names the pip build folder"; exit 1; }
-		echo "stripped the debug info and the build id of ${f#$R}"
-	done
+	# (the debug info of the lva libraries: rootfs/lva-build.sh)
 	# No file time after SOURCE_DATE_EPOCH (the files that the build made or
 	# changed; the times of the packages are older and stay).
 	touch -d "@$SDE" /build/sde.ref
@@ -793,12 +810,26 @@ IMG_MB=${IMG_MB:-$(( (used * 105 / 100) + ${IMG_HEADROOM_MB:-256} ))}
 log "ext4 image (${IMG_MB} MiB, label tsxroot; content ${used} MiB)"
 rm -f "$OUT/rootfs.ext4"
 # ROOTFS_UUID fixes the UUID, the metadata checksum seed and the directory hash
-# seed. mke2fs takes its times from SOURCE_DATE_EPOCH when it is set.
+# seed. mke2fs takes its times from SOURCE_DATE_EPOCH when it is set. Always
+# 4 KiB blocks and the "default" usage type (DESIGN-R23 §1: for a small image,
+# such as the R23 base, mke2fs would pick 1 KiB blocks and the "small" type;
+# the unit grows the file system to fill the slot).
 UUIDARGS=
 [ -z "${ROOTFS_UUID:-}" ] || UUIDARGS="-U $ROOTFS_UUID -E hash_seed=$ROOTFS_UUID"
 # shellcheck disable=SC2086 # empty or four words
-mke2fs -q -t ext4 -L tsxroot -m 1 $UUIDARGS -d $R "$OUT/rootfs.ext4" "${IMG_MB}M"
+mke2fs -q -t ext4 -b 4096 -T default -L tsxroot -m 1 $UUIDARGS -d $R "$OUT/rootfs.ext4" "${IMG_MB}M"
 e2fsck -fn "$OUT/rootfs.ext4" >/dev/null && echo "e2fsck clean"
-(cd "$OUT" && sha256sum rootfs.tar.gz rootfs.ext4 > rootfs.sha256)
+# The R23 base ships compressed (manifest schema 3, rootfs_zst): zstd -19 with
+# a window of at most 8 MiB (the unit's decoder), one thread (the same bytes)
+ZST=
+if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
+	rm -f "$OUT/rootfs.ext4.zst"
+	zstd -q -19 --zstd=wlog=23 -T1 --no-progress -o "$OUT/rootfs.ext4.zst" "$OUT/rootfs.ext4"
+	zstd -q -d -c "$OUT/rootfs.ext4.zst" | cmp -s - "$OUT/rootfs.ext4" || { echo "ERROR: rootfs.ext4.zst does not unpack to rootfs.ext4"; exit 1; }
+	ZST=rootfs.ext4.zst
+fi
+# shellcheck disable=SC2086 # empty or one word
+(cd "$OUT" && sha256sum rootfs.tar.gz rootfs.ext4 $ZST > rootfs.sha256)
 chown "$UIDGID" "$OUT"/rootfs.*
+[ ! -d "$OUT/r23" ] || chown -R "$UIDGID" "$OUT/r23"
 ls -ls "$OUT"/rootfs.*

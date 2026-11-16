@@ -1,0 +1,953 @@
+{
+ "entries": 34,
+ "exclude": [
+  "/dev",
+  "/proc",
+  "/sys",
+  "/run",
+  "/tmp",
+  "/lost+found",
+  "/etc/machine-id",
+  "/etc/ssh/ssh_host_*",
+  "/var/log",
+  "/var/cache",
+  "/var/lib/*",
+  "!/var/lib/tsx",
+  "/root",
+  "/data",
+  "**/__pycache__",
+  "/etc/hostname",
+  "/etc/hosts",
+  "/etc/shadow",
+  "/etc/shadow-",
+  "/etc/apk/repositories",
+  "/etc/runlevels/default/sshd",
+  "/usr/share/uc-pxx-provision/profiles.json"
+ ],
+ "exclude_sha256": "ddb397d8dedbd86b3c0cd9d596dfcbad1c6479b60866b543ebeca56142e3d1cc",
+ "excluded": [
+  [
+   "2f",
+   false,
+   true
+  ],
+  [
+   "2f62696e",
+   false,
+   false
+  ],
+  [
+   "2f62696e2f62757379626f78",
+   false,
+   false
+  ],
+  [
+   "2f62696e2f7368",
+   false,
+   false
+  ],
+  [
+   "2f62696e2f7375",
+   false,
+   false
+  ],
+  [
+   "2f64617461",
+   true,
+   false
+  ],
+  [
+   "2f646174612f747378",
+   true,
+   false
+  ],
+  [
+   "2f646174612f7473782f70616e656c2e636f6e66",
+   true,
+   false
+  ],
+  [
+   "2f646576",
+   true,
+   false
+  ],
+  [
+   "2f6465762f6e756c6c",
+   true,
+   false
+  ],
+  [
+   "2f657463",
+   false,
+   false
+  ],
+  [
+   "2f6574632f612062",
+   false,
+   false
+  ],
+  [
+   "2f6574632f612d62",
+   false,
+   false
+  ],
+  [
+   "2f6574632f61",
+   false,
+   false
+  ],
+  [
+   "2f6574632f612f62",
+   false,
+   false
+  ],
+  [
+   "2f6574632f6261636b5c736c617368ff7f",
+   false,
+   false
+  ],
+  [
+   "2f6574632f61706b",
+   false,
+   false
+  ],
+  [
+   "2f6574632f61706b2f7265706f7369746f72696573",
+   true,
+   false
+  ],
+  [
+   "2f6574632f61706b2f776f726c64",
+   false,
+   false
+  ],
+  [
+   "2f6574632f686f73746e616d65",
+   true,
+   false
+  ],
+  [
+   "2f6574632f686f737473",
+   true,
+   false
+  ],
+  [
+   "2f6574632f6d616368696e652d6964",
+   true,
+   false
+  ],
+  [
+   "2f6574632f72756e6c6576656c73",
+   false,
+   false
+  ],
+  [
+   "2f6574632f72756e6c6576656c732f64656661756c74",
+   false,
+   false
+  ],
+  [
+   "2f6574632f72756e6c6576656c732f64656661756c742f6b696f736b",
+   false,
+   false
+  ],
+  [
+   "2f6574632f72756e6c6576656c732f64656661756c742f73736864",
+   true,
+   false
+  ],
+  [
+   "2f6574632f736861646f77",
+   true,
+   false
+  ],
+  [
+   "2f6574632f736861646f772d",
+   true,
+   false
+  ],
+  [
+   "2f6574632f737368",
+   false,
+   false
+  ],
+  [
+   "2f6574632f7373682f7373685f686f73745f656432353531395f6b6579",
+   true,
+   false
+  ],
+  [
+   "2f6574632f7373682f737368645f636f6e666967",
+   false,
+   false
+  ],
+  [
+   "2f6574632f747378",
+   false,
+   false
+  ],
+  [
+   "2f6574632f7473782f6c696e6b2077697468207370616365",
+   false,
+   false
+  ],
+  [
+   "2f6c6f73742b666f756e64",
+   true,
+   false
+  ],
+  [
+   "2f70726f63",
+   true,
+   false
+  ],
+  [
+   "2f726f6f74",
+   true,
+   false
+  ],
+  [
+   "2f726f6f742f2e737368",
+   true,
+   false
+  ],
+  [
+   "2f72756e",
+   true,
+   false
+  ],
+  [
+   "2f72756e2f782e706964",
+   true,
+   false
+  ],
+  [
+   "2f737276",
+   false,
+   false
+  ],
+  [
+   "2f7372762f6669666f",
+   false,
+   false
+  ],
+  [
+   "2f7372762f736f636b",
+   false,
+   false
+  ],
+  [
+   "2f7372762f736461",
+   false,
+   false
+  ],
+  [
+   "2f737973",
+   true,
+   false
+  ],
+  [
+   "2f746d70",
+   true,
+   false
+  ],
+  [
+   "2f746d702f74",
+   true,
+   false
+  ],
+  [
+   "2f757372",
+   false,
+   false
+  ],
+  [
+   "2f7573722f6c6962",
+   false,
+   false
+  ],
+  [
+   "2f7573722f6c69622f707974686f6e332e3132",
+   false,
+   false
+  ],
+  [
+   "2f7573722f6c69622f707974686f6e332e31322f5f5f707963616368655f5f",
+   true,
+   false
+  ],
+  [
+   "2f7573722f6c69622f707974686f6e332e31322f5f5f707963616368655f5f2f6f732e63707974686f6e2d3331322e707963",
+   true,
+   false
+  ],
+  [
+   "2f7573722f6c69622f707974686f6e332e31322f6f732e7079",
+   false,
+   false
+  ],
+  [
+   "2f7573722f7368617265",
+   false,
+   false
+  ],
+  [
+   "2f7573722f73686172652f75632d7078782d70726f766973696f6e",
+   false,
+   false
+  ],
+  [
+   "2f7573722f73686172652f75632d7078782d70726f766973696f6e2f70726f66696c652e7368",
+   false,
+   false
+  ],
+  [
+   "2f7573722f73686172652f75632d7078782d70726f766973696f6e2f70726f66696c65732e6a736f6e",
+   true,
+   false
+  ],
+  [
+   "2f766172",
+   false,
+   true
+  ],
+  [
+   "2f7661722f6361636865",
+   true,
+   false
+  ],
+  [
+   "2f7661722f63616368652f666f6e74636f6e666967",
+   true,
+   false
+  ],
+  [
+   "2f7661722f63616368652f666f6e74636f6e6669672f782d6c6536342e63616368652d39",
+   true,
+   false
+  ],
+  [
+   "2f7661722f6c6962",
+   false,
+   true
+  ],
+  [
+   "2f7661722f6c69622f6368726f6e79",
+   true,
+   false
+  ],
+  [
+   "2f7661722f6c69622f6b696f736b",
+   true,
+   false
+  ],
+  [
+   "2f7661722f6c69622f747378",
+   false,
+   false
+  ],
+  [
+   "2f7661722f6c69622f7473782f6175746f757064617465",
+   true,
+   false
+  ],
+  [
+   "2f7661722f6c69622f7473782f6175746f7570646174652f6669656c6473",
+   true,
+   false
+  ],
+  [
+   "2f7661722f6c69622f747378666f6f",
+   true,
+   false
+  ],
+  [
+   "2f7661722f6c6f67",
+   true,
+   false
+  ],
+  [
+   "2f7661722f6c6f672f61706b2e6c6f67",
+   true,
+   false
+  ],
+  [
+   "2f7661722f6c69622f747378",
+   false,
+   false
+  ],
+  [
+   "2f7661722f6c69622f747378666f6f2f78",
+   true,
+   false
+  ],
+  [
+   "2f6574632f7373682f7373685f686f73745f",
+   true,
+   false
+  ],
+  [
+   "2f6574632f73736878",
+   false,
+   false
+  ],
+  [
+   "2f612f5f5f707963616368655f5f2f62",
+   true,
+   false
+  ],
+  [
+   "2f612f5f5f707963616368655f5f78",
+   false,
+   false
+  ],
+  [
+   "2f646576",
+   true,
+   false
+  ],
+  [
+   "2f64657678",
+   false,
+   false
+  ],
+  [
+   "2f646174612f78",
+   true,
+   false
+  ],
+  [
+   "2f7573722f73686172652f75632d7078782d70726f766973696f6e2f70726f66696c65732e6a736f6e2e78",
+   false,
+   false
+  ]
+ ],
+ "forbidden": {
+  "path_hex": "2f7661722f6c6f672f61706b2e6c6f67",
+  "sha256": "9f8ca1f95c1d1d4e4364b84fa2691d5d70039f283fcd77468acc4e2d588be3e2",
+  "size": 26,
+  "what": "test"
+ },
+ "format": "uc-pxx-content-manifest-1",
+ "manifest": "/ d 0755 0 0 0 -\n/bin d 0755 0 0 0 -\n/bin/busybox f 0755 0 0 12 7e7bb2d042cf09830894b2944b74b488213578dbce11226c7b16fffdd6b53e43\n/bin/sh l 0777 0 0 12 /bin/busybox\n/bin/su f 4755 0 0 2 0a64ce10853f25cb3dc3f7d498f62d72b406be37ba8caf5aa7671414d9696049\n/etc d 0755 0 0 0 -\n/etc/a d 0755 0 0 0 -\n/etc/a\\x20b f 0644 0 0 0 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n/etc/a-b f 0644 0 0 1 2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\n/etc/a/b f 0644 0 0 1 a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa\n/etc/apk d 0755 0 0 0 -\n/etc/apk/world f 0644 0 0 8 597d455e6299f2550cc1c1fbfa819cd50c4751ded18c548376e1e7576e16d7e9\n/etc/back\\x5cslash\\xff\\x7f f 0644 0 0 1 594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06\n/etc/runlevels d 0755 0 0 0 -\n/etc/runlevels/default d 0755 0 0 0 -\n/etc/runlevels/default/kiosk l 0777 0 0 17 /etc/init.d/kiosk\n/etc/ssh d 0755 0 0 0 -\n/etc/ssh/sshd_config f 0644 0 0 20 e7be8a5b180550215af6a66239c484957fea9f7f8102b15185b0361b53c30657\n/etc/tsx d 0755 0 0 0 -\n/etc/tsx/link\\x20with\\x20space l 0777 0 0 8 ../a\\x20b\\x5cc\n/srv d 0755 0 0 0 -\n/srv/fifo p 0600 0 0 0 -\n/srv/sda b 0660 0 6 0 8:0\n/srv/sock s 0755 0 0 0 -\n/usr d 0755 0 0 0 -\n/usr/lib d 0755 0 0 0 -\n/usr/lib/python3.12 d 0755 0 0 0 -\n/usr/lib/python3.12/os.py f 0644 0 0 11 c517577851c489e45abae2591256c40404a05c6d19cd4d5ae7fd22b0084cec6c\n/usr/share d 0755 0 0 0 -\n/usr/share/uc-pxx-provision d 0755 0 0 0 -\n/usr/share/uc-pxx-provision/profile.sh f 0755 0 0 10 a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf\n/var d 0755 0 0 0 -\n/var/lib d 0755 0 0 0 -\n/var/lib/tsx d 0755 0 0 0 -\n",
+ "manifest_sha256": "43b425719210de4672f89a1322be08536f49625c2d382930eaf9eeec13d14c57",
+ "note": "Shared vectors of uc-pxx-linux tools/mainline-payload/contentmanifest.py and uc-pxx-installer internal/clone/manifest.go. tree: a virtual tree (path_hex: the path bytes; data_hex: the content of a regular file or the target of a link; mode: 4 octal digits). manifest: the manifest of the tree with the exclusion list exclude (Options{}); excluded: [path_hex, Excluded(p), keptBelow(p)]. forbidden: Build with Options{Full: true, Forbidden: [the pin]} must fail on that path, which is under an excluded folder.",
+ "tree": [
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f62696e",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "7f454c462062757379626f78",
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f62696e2f62757379626f78",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "data_hex": "2f62696e2f62757379626f78",
+   "gid": 0,
+   "mode": "0777",
+   "path_hex": "2f62696e2f7368",
+   "type": "l",
+   "uid": 0
+  },
+  {
+   "data_hex": "7375",
+   "gid": 0,
+   "mode": "4755",
+   "path_hex": "2f62696e2f7375",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f64617461",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0700",
+   "path_hex": "2f646174612f747378",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "5353483d310a",
+   "gid": 0,
+   "mode": "0600",
+   "path_hex": "2f646174612f7473782f70616e656c2e636f6e66",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f646576",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "major": 1,
+   "minor": 3,
+   "mode": "0666",
+   "path_hex": "2f6465762f6e756c6c",
+   "type": "c",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f657463",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f6574632f612062",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "data_hex": "78",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f6574632f612d62",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f6574632f61",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "79",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f6574632f612f62",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "data_hex": "7a",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f6574632f6261636b5c736c617368ff7f",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f6574632f61706b",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "68747470733a2f2f782f76332e32342f6d61696e0a",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f6574632f61706b2f7265706f7369746f72696573",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "data_hex": "62757379626f780a",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f6574632f61706b2f776f726c64",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "data_hex": "7473782d6b696f736b0a",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f6574632f686f73746e616d65",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "data_hex": "3132372e302e302e31206c6f63616c686f73740a",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f6574632f686f737473",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "data_hex": "303132330a",
+   "gid": 0,
+   "mode": "0444",
+   "path_hex": "2f6574632f6d616368696e652d6964",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f6574632f72756e6c6576656c73",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f6574632f72756e6c6576656c732f64656661756c74",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "2f6574632f696e69742e642f6b696f736b",
+   "gid": 0,
+   "mode": "0777",
+   "path_hex": "2f6574632f72756e6c6576656c732f64656661756c742f6b696f736b",
+   "type": "l",
+   "uid": 0
+  },
+  {
+   "data_hex": "2f6574632f696e69742e642f73736864",
+   "gid": 0,
+   "mode": "0777",
+   "path_hex": "2f6574632f72756e6c6576656c732f64656661756c742f73736864",
+   "type": "l",
+   "uid": 0
+  },
+  {
+   "data_hex": "726f6f743a2a3a32303030303a303a3a3a3a3a0a",
+   "gid": 42,
+   "mode": "0640",
+   "path_hex": "2f6574632f736861646f77",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "data_hex": "726f6f743a2a3a31393030303a303a3a3a3a3a0a",
+   "gid": 42,
+   "mode": "0640",
+   "path_hex": "2f6574632f736861646f772d",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f6574632f737368",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "4b4559",
+   "gid": 0,
+   "mode": "0600",
+   "path_hex": "2f6574632f7373682f7373685f686f73745f656432353531395f6b6579",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "data_hex": "5065726d6974526f6f744c6f67696e207965730a",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f6574632f7373682f737368645f636f6e666967",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f6574632f747378",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "2e2e2f6120625c63",
+   "gid": 0,
+   "mode": "0777",
+   "path_hex": "2f6574632f7473782f6c696e6b2077697468207370616365",
+   "type": "l",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0700",
+   "path_hex": "2f6c6f73742b666f756e64",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0555",
+   "path_hex": "2f70726f63",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0700",
+   "path_hex": "2f726f6f74",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0700",
+   "path_hex": "2f726f6f742f2e737368",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f72756e",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "310a",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f72756e2f782e706964",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f737276",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0600",
+   "path_hex": "2f7372762f6669666f",
+   "type": "p",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7372762f736f636b",
+   "type": "s",
+   "uid": 0
+  },
+  {
+   "gid": 6,
+   "major": 8,
+   "minor": 0,
+   "mode": "0660",
+   "path_hex": "2f7372762f736461",
+   "type": "b",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0555",
+   "path_hex": "2f737973",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "1777",
+   "path_hex": "2f746d70",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "74",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f746d702f74",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f757372",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7573722f6c6962",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7573722f6c69622f707974686f6e332e3132",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7573722f6c69622f707974686f6e332e31322f5f5f707963616368655f5f",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "707963",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f7573722f6c69622f707974686f6e332e31322f5f5f707963616368655f5f2f6f732e63707974686f6e2d3331322e707963",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "data_hex": "696d706f7274207379730a",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f7573722f6c69622f707974686f6e332e31322f6f732e7079",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7573722f7368617265",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7573722f73686172652f75632d7078782d70726f766973696f6e",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "23212f62696e2f73680a",
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7573722f73686172652f75632d7078782d70726f766973696f6e2f70726f66696c652e7368",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "data_hex": "7b7d0a",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f7573722f73686172652f75632d7078782d70726f766973696f6e2f70726f66696c65732e6a736f6e",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f766172",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7661722f6361636865",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7661722f63616368652f666f6e74636f6e666967",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "6361636865",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f7661722f63616368652f666f6e74636f6e6669672f782d6c6536342e63616368652d39",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7661722f6c6962",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 103,
+   "mode": "0750",
+   "path_hex": "2f7661722f6c69622f6368726f6e79",
+   "type": "d",
+   "uid": 102
+  },
+  {
+   "gid": 1000,
+   "mode": "0755",
+   "path_hex": "2f7661722f6c69622f6b696f736b",
+   "type": "d",
+   "uid": 1000
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7661722f6c69622f747378",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7661722f6c69622f7473782f6175746f757064617465",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "6d6f64653d6d616e75616c0a",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f7661722f6c69622f7473782f6175746f7570646174652f6669656c6473",
+   "type": "f",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7661722f6c69622f747378666f6f",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "gid": 0,
+   "mode": "0755",
+   "path_hex": "2f7661722f6c6f67",
+   "type": "d",
+   "uid": 0
+  },
+  {
+   "data_hex": "52756e6e696e67206061706b206164646020617420323032360a",
+   "gid": 0,
+   "mode": "0644",
+   "path_hex": "2f7661722f6c6f672f61706b2e6c6f67",
+   "type": "f",
+   "uid": 0
+  }
+ ]
+}

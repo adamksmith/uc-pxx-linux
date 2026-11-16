@@ -15,7 +15,7 @@ assembly and the manifest. docs/mainline-payload.md tells the contract.
   payload.py scan-tar TARGZ
       Refuse a tarball (the rootfs) that holds a Rockchip resource (a file
       that starts with RSCE) or a file with the sha256 of the stock resource.
-  payload.py both-slot ROOTFS_TARGZ INITRAMFS_CPIO SOURCE_DIR
+  payload.py both-slot ROOTFS_TARGZ INITRAMFS_CPIO SOURCE_DIR [--provision-sha256 SHA]
       Say whether the payload is a both-slot build of SOURCE_DIR (a copy of
       the uc-pxx-linux commit): each boot-control, slot and data file of the
       rootfs (from the packages) and of the initramfs (from the kernel
@@ -28,13 +28,16 @@ assembly and the manifest. docs/mainline-payload.md tells the contract.
       both_slot=no. "yes" means "equal to this commit and the two pinned
       binaries", not "reviewed": only the installer's gate pins decide.
       The exit status is 0 either way (build.sh --require-both-slot stops on
-      no).
+      no). --provision-sha256: an R23 base, whose provisioning set (the
+      uc-pxx-provision binary of that sha256, its service and conf, and
+      /usr/share/uc-pxx-provision: the files of the commit and profiles.json)
+      must be exactly there; without it no file of the set may be there.
   payload.py assemble TEMPLATE RESOURCE OUT
       Put RESOURCE into a copy of TEMPLATE as the "second" part, as
       kernel/mkimage.sh --resource RESOURCE makes it from the same inputs.
   payload.py manifest --version V --pin PIN_FILE --template F --resource F
                       --assembled F --rootfs F --vbmeta F --vbmeta-patched F
-                      --out MANIFEST [--allow-over-cap]
+                      --out MANIFEST [--allow-over-cap] [--rootfs-zst F]
       Check every part and write manifest.json. ASSEMBLED must be the image of
       kernel/mkimage.sh --resource RESOURCE (build.sh makes it); the generator
       assembles the template again by itself and stops when the two differ.
@@ -42,6 +45,9 @@ assembly and the manifest. docs/mainline-payload.md tells the contract.
       output of vbmeta-patch.py patch: the generator checks that the two differ
       only in the image_size field of the boot hash descriptor, which holds
       the new cap, and that the patched file has the pinned sha256.
+      --rootfs-zst F: schema 3, the manifest also pins rootfs.ext4.zst (a
+      zstd frame with a window of at most 8 MiB; rootfs pins the unpacked
+      file, which build.sh compares with the unpacked F).
 
 Every refusal exits with status 1 and one line "payload: ...". An assembled
 image larger than the boot cap of the patched vbmeta exits with status 3 (the
@@ -85,6 +91,8 @@ BOOTCHAIN = {
 # patched value is 67,108,864 (the size of boot_a; unit 2's vbmeta_a since
 # 2026-10-24). The values are pinned here and in vbmeta-patch.py.
 SCHEMA = 2
+SCHEMA_ZST = 3
+ZST_MAX_WINDOW = 8 << 20
 SIGNED_BOOT_IMAGE_SIZE = 38029312
 VBMETA_BOOT_CAP = 67108864
 VBMETA_SIZE = 8192
@@ -481,9 +489,62 @@ def cpio_files(data):
     return {n: b for n, m, b in cpio_entries(data) if m & 0o170000 == 0o100000}
 
 
+PROVISION_DIRS = ("usr/libexec/uc-pxx-provision", "usr/share/uc-pxx-provision")
+
+
+def provision_set(src, bin_sha):
+    """The provisioning set of an R23 base, from the commit (SOURCE_DIR): path -> (want, mode)."""
+    t = {
+        "usr/libexec/uc-pxx-provision": ("dir", 0o700),
+        "usr/libexec/uc-pxx-provision/uc-pxx-provision": (bin_sha, 0o700),
+        "etc/init.d/uc-pxx-provision": ("src:rootfs/provision/init.d/uc-pxx-provision", 0o755),
+        "etc/conf.d/uc-pxx-provision": ("src:rootfs/provision/conf.d/uc-pxx-provision", 0o644),
+        "etc/runlevels/default/uc-pxx-provision": ("link:/etc/init.d/uc-pxx-provision", None),
+        "usr/share/uc-pxx-provision": ("dir", 0o755),
+        "usr/share/uc-pxx-provision/profile-apply.sh": ("src:rootfs/profile-apply.sh", 0o755),
+        "usr/share/uc-pxx-provision/profile.sh": ("src:rootfs/profile.sh", 0o755),
+        "usr/share/uc-pxx-provision/profiles": ("dir", 0o755),
+        "usr/share/uc-pxx-provision/profiles.json": ("any", 0o644),
+    }
+    pd = os.path.join(src, "rootfs/profiles")
+    for f in sorted(os.listdir(pd)):
+        if f.endswith(".list"):
+            t["usr/share/uc-pxx-provision/profiles/" + f] = ("src:rootfs/profiles/" + f, 0o644)
+    for prof in ("console", "kiosk", "ha"):
+        top = os.path.join(pd, prof, "overlay")
+        if not os.path.isdir(top):
+            continue
+        for d, dirs, files in os.walk(top):
+            rel = os.path.relpath(d, pd)
+            for x in [rel] + ["/".join(rel.split("/")[:i]) for i in range(1, len(rel.split("/")))]:
+                t["usr/share/uc-pxx-provision/profiles/" + x] = ("dir", 0o755)
+            for f in files:
+                fp = os.path.join(d, f)
+                t["usr/share/uc-pxx-provision/profiles/%s/%s" % (rel, f)] = (
+                    "src:" + os.path.relpath(fp, src), 0o755 if os.access(fp, os.X_OK) else 0o644)
+    with open(os.path.join(pd, "image.list")) as fh:
+        img = [l.split()[1] for l in fh if l.split()[:1] == ["image"]]
+    for f in img:
+        fp = os.path.join(src, "rootfs/overlay", f)
+        if not os.path.exists(fp):
+            continue
+        parts = f.split("/")
+        for i in range(0, len(parts)):
+            t["usr/share/uc-pxx-provision/" + "/".join(["overlay"] + parts[:i])] = ("dir", 0o755)
+        t["usr/share/uc-pxx-provision/overlay/" + f] = ("src:rootfs/overlay/" + f, 0o755 if os.access(fp, os.X_OK) else 0o644)
+    return t
+
+
 def cmd_both_slot(a):
     """both_slot=yes means: the files are the bytes (and modes) of this commit and
     of the two pinned binaries. It is not a review: only the gate pins decide."""
+    prov_sha = None
+    if len(a) == 5 and a[3] == "--provision-sha256" and re.fullmatch("[0-9a-f]{64}", a[4]):
+        prov_sha = a[4]
+        a = a[:3]
+    elif len(a) != 3:
+        raise Refuse("both-slot ROOTFS_TARGZ INITRAMFS_CPIO SOURCE_DIR [--provision-sha256 SHA]")
+    prov = {}
     want = set(p for p, _ in BOTH_SLOT_ROOTFS) | {"usr/share/uc-pxx/boot-control.sha256", "etc/fstab",
                                                     "usr/sbin/uc-pxx-bootctl", "usr/sbin/uc-pxx-update-boot"}
     rootfs, rmode, bad, step2, usb = {}, {}, [], {}, {}
@@ -501,6 +562,11 @@ def cmd_both_slot(a):
                 h = hashlib.sha256(tf.extractfile(m).read()).hexdigest()
                 if h in STEP2_SHAS and STEP2_SHAS[h] != n:
                     bad.append("rootfs /%s is a copy of /%s" % (n, STEP2_SHAS[h]))
+            if (base.startswith("uc-pxx-provision") or any(n == d or n.startswith(d + "/") for d in PROVISION_DIRS)):
+                kind = "dir" if m.isdir() else "link:" + m.linkname if m.issym() else "file" if m.isreg() else "other"
+                data = tf.extractfile(m).read() if m.isreg() else None
+                prov[n] = (kind, m.mode & 0o7777, m.uid, m.gid, data)
+                continue
             if n in USB_SET or base.startswith("uc-pxx-xfer") or base.startswith("uc-pxx-usb"):
                 kind = "dir" if m.isdir() else "link:" + m.linkname if m.issym() else "file" if m.isreg() else "other"
                 data = tf.extractfile(m).read() if m.isreg() else None
@@ -627,6 +693,16 @@ def cmd_both_slot(a):
         for n in sorted(step2):
             bad.append("rootfs /%s present without a step-2 build (uc-pxx-bootctl-inst or step 2)" % n)
         print("step2=no (a normal build: no file of step 2)")
+    if prov_sha is not None:
+        if STEP2_MARKER not in step2:
+            bad.append("provision: the provisioning set needs a STEP-2 build")
+        check_set("provision", prov, provision_set(a[2], prov_sha))
+        print("provision=yes (an R23 base: uc-pxx-provision %s, its service, /usr/share/uc-pxx-provision)" % prov_sha
+              if not [b for b in bad if b.startswith("provision")] else "provision=bad")
+    else:
+        for n in sorted(prov):
+            bad.append("rootfs /%s present without an R23 base (--provision-sha256)" % n)
+        print("provision=no (no provisioning set)")
     ref = read(os.path.join(a[2], "rootfs/overlay/etc/fstab"))
     if rootfs.get("etc/fstab") != ref:
         bad.append("the fstab is not the commit's (%s): a root or /data line by label, UUID or path is not both-slot"
@@ -651,6 +727,28 @@ MANIFEST_OPTS = ("--version", "--pin", "--template", "--resource", "--assembled"
                  "--vbmeta-patched", "--out")
 
 
+def check_zst(path):
+    """A zstd file: the magic, one frame header with a window of at most 8 MiB (the unit's decoder)."""
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        hd = f.read(14)
+    if len(hd) < 6 or hd[:4] != b"\x28\xb5\x2f\xfd":
+        raise Refuse("%s is not a zstd file" % path)
+    fhd = hd[4]
+    if fhd & 0x20:
+        raise Refuse("%s: a single-segment frame (the window is the whole content), not wlog 23" % path)
+    wd = hd[5]
+    wlog = 10 + (wd >> 3)
+    window = (1 << wlog) + ((1 << wlog) // 8) * (wd & 7)
+    if window > ZST_MAX_WINDOW:
+        raise Refuse("%s: the zstd window is %d bytes, more than %d" % (path, window, ZST_MAX_WINDOW))
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 22), b""):
+            h.update(b)
+    return size, h.hexdigest(), window
+
+
 def check_vbmeta_patch(signed, patched):
     """The patched vbmeta of contract v2: the pinned signed file with only the
     8-byte image_size field of the boot hash descriptor changed to the cap."""
@@ -670,12 +768,16 @@ def check_vbmeta_patch(signed, patched):
 
 
 def cmd_manifest(a):
-    opts, allow = {}, False
+    opts, allow, zst = {}, False, None
     i = 0
     while i < len(a):
         if a[i] == "--allow-over-cap":
             allow = True
             i += 1
+            continue
+        if a[i] == "--rootfs-zst" and i + 1 < len(a) and zst is None:
+            zst = a[i + 1]
+            i += 2
             continue
         if a[i] not in MANIFEST_OPTS or i + 1 >= len(a):
             raise Refuse("manifest: unknown or incomplete option %s" % a[i])
@@ -706,7 +808,7 @@ def cmd_manifest(a):
     vsigned, vpatched = read(opts["--vbmeta"]), read(opts["--vbmeta-patched"])
     check_vbmeta_patch(vsigned, vpatched)
     man = {
-        "schema": SCHEMA,
+        "schema": SCHEMA if zst is None else SCHEMA_ZST,
         "kind": "uc-pxx-mainline",
         "version": version,
         "model": MODEL,
@@ -721,6 +823,10 @@ def cmd_manifest(a):
                            "boot_image_size": VBMETA_BOOT_CAP},
         "vbmeta_boot_cap": VBMETA_BOOT_CAP,
     }
+    if zst is not None:
+        zsize, zsha, window = check_zst(zst)
+        man["rootfs_zst"] = {"file": "rootfs.ext4.zst", "size": zsize, "sha256": zsha}
+        print("rootfs_zst %d bytes, sha256 %s (window %d)" % (zsize, zsha, window))
     over = len(mine) - VBMETA_BOOT_CAP
     print("boot template %d bytes, sha256 %s, token %s, kernel %s" % (len(tpl), sha256(tpl), h["token"], h["release"]))
     print("boot assembled %d bytes, sha256 %s" % (len(mine), sha256(mine)))
@@ -740,7 +846,7 @@ def cmd_manifest(a):
 
 def main(argv):
     cmds = {"check-template": (2, cmd_check_template), "split": (2, cmd_split), "initramfs": (2, cmd_initramfs),
-            "scan-tar": (1, cmd_scan_tar), "both-slot": (3, cmd_both_slot),
+            "scan-tar": (1, cmd_scan_tar), "both-slot": (None, cmd_both_slot),
             "assemble": (3, cmd_assemble), "manifest": (None, cmd_manifest)}
     if not argv or argv[0] not in cmds:
         sys.stderr.write(__doc__.split("Every refusal")[0])

@@ -13,6 +13,8 @@
 #                                         [--step2-bootctl-inst FILE --step2-bin FILE] [--xfer-bin FILE]
 #                                         [--dev-apk-key NAME.rsa.pub] [--require-both-slot]
 #                                         [--autoupdate-mode manual|auto] [--ssh-access keys|setup]
+#                                         [--provision-bin FILE [--r23-release R] [--provision-url URL ...]
+#                                          [--expect-refs FILE]]
 #
 # prime   Makes the input snapshot DIR (network): DIR/tsx is the published apk
 #         tree of tsx-aports (rootfs/fetch-apk-tree.sh, --channel, default the
@@ -104,6 +106,29 @@
 # --require-both-slot  stop (exit 1) unless the payload is a both-slot build
 #             of this commit (payload.py both-slot; the verdict is in
 #             both-slot.txt and build-info.txt either way).
+# --provision-bin  an R23 BASE build (DESIGN-R23 §7.2): the uc-pxx-provision
+#             binary (uc-pxx-installer cmd/uc-pxx-provision). The inputs record
+#             PROVISION_BIN_SHA256, and the rootfs build checks the binary
+#             against it (rootfs/mkrootfs.sh). It needs the console profile,
+#             --step2-bootctl-inst/--step2-bin and --xfer-bin, and makes
+#             --require-both-slot. The build then also makes, from the base
+#             tree, the reference B and A trees of the profiles console, kiosk
+#             and kiosk-ha, their content manifests (ref_b, ref_a), the profile
+#             bundles of kiosk and kiosk-ha, and profiles.json in the base
+#             (rootfs/r23-refs.sh). Outputs: r23/ (the bundles, the manifests,
+#             refs.txt, profiles.json); the payload folder holds manifest.json
+#             (schema 3), boot-template.img and rootfs.ext4.zst (zstd -19,
+#             window 8 MiB); rootfs.ext4 (unpacked) is next to the folder.
+# --r23-release  the release of the bundles and of A's build ids (R23_RELEASE;
+#             default: VERSION). --provision-url  a base URL of the bundles in
+#             profiles.json (PROVISION_URLS, space separated; default the
+#             GitHub release mainline-rc-10 of uc-pxx-installer).
+# --expect-refs  a refs.txt of an earlier build (the two-stage order of
+#             DESIGN-R23 §7.2: ref_a goes into step 2's gate before the base is
+#             built with that step 2): every line that the file has must be
+#             the same in this build's refs.txt, or the build stops (exit 1).
+#             Lines whose key starts with REF_B_ or is PROFILES_JSON are not
+#             compared (ref_b covers the step-2 binary).
 #
 # The inputs file: one KEY=VALUE per line, "#" lines are comments, each key
 # once, no other key:
@@ -136,6 +161,11 @@
 #   STEP2_BIN_SHA256    none, or the sha256 of --step2-bin
 #   XFER_BIN_SHA256     none, or the sha256 of --xfer-bin
 #   DEV_APK_KEY_SHA256  none, or the sha256 of --dev-apk-key
+#   PROVISION_BIN_SHA256  none, or the sha256 of --provision-bin (an R23 base)
+#   R23_RELEASE         none, or the release of an R23 base (--r23-release)
+#   PROVISION_URLS      none, or the bundle base URLs (--provision-url)
+#   CONTENT_EXCLUDE_SHA256, CLONE_DELTA_SHA256  none, or (an R23 base) the
+#                       sha256 of r23/content-exclude.txt and r23/clone-delta.json
 #   CROSS_CC_VERSION, CROSS_LD_VERSION, DTC_VERSION, MKBOOTIMG_SHA256
 #                       the host tools of kernel/mkimage.sh
 #
@@ -158,21 +188,23 @@ MKIMAGE_SHA=98ef579ce1f152463c8902c53c2f2f8edfbdfd6b8a0d40d650c59844d893703f
 ALPINE_REF_DEFAULT=alpine@sha256:e311ae748be7f56ae5cba304bc488f0786df68ee507513f654a5cc8597cffb42
 ALPINE=v3.24
 UPSTREAM=${UPSTREAM_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
-FMT=uc-pxx-mainline-payload-inputs-7
+FMT=uc-pxx-mainline-payload-inputs-8
 # uc-pxx-bootctl-inst r2 (RULES.md: the installer RAM image only; Q-S8: a step-2 rootfs)
 STEP2_INST_SHA=20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203
 KEYS="FORMAT VERSION SOURCE_DATE_EPOCH UC_PXX_LINUX_COMMIT KERNEL_REV MKIMAGE_SHA256 SHIM_SHA256
 RESOURCE_SHA256 VBMETA_SHA256 ALPINE_IMAGE ALPINE_IMAGE_ID ALPINE_SNAPSHOT TSX_SNAPSHOT PIP_SNAPSHOT PROFILE
-ROOTFS_UUID IMG_HEADROOM_MB TSX_APK_URL AUTHORIZED_KEYS_SHA256 AUTOUPDATE_MODE SSH_ACCESS STEP2_BOOTCTL_INST_SHA256 STEP2_BIN_SHA256 XFER_BIN_SHA256 DEV_APK_KEY_SHA256 CROSS_CC_VERSION CROSS_LD_VERSION
+ROOTFS_UUID IMG_HEADROOM_MB TSX_APK_URL AUTHORIZED_KEYS_SHA256 AUTOUPDATE_MODE SSH_ACCESS STEP2_BOOTCTL_INST_SHA256 STEP2_BIN_SHA256 XFER_BIN_SHA256 DEV_APK_KEY_SHA256
+PROVISION_BIN_SHA256 R23_RELEASE PROVISION_URLS CONTENT_EXCLUDE_SHA256 CLONE_DELTA_SHA256 CROSS_CC_VERSION CROSS_LD_VERSION
 DTC_VERSION MKBOOTIMG_SHA256"
+PROVISION_URL_DEFAULT=https://github.com/tsx-mainline/uc-pxx-installer/releases/download/mainline-rc-10/
 die() { echo "mainline-payload: $*" >&2; exit 1; }
-usage() { sed -n '9,14p' "$0" >&2; exit 2; }
+usage() { sed -n '9,16p' "$0" >&2; exit 2; }
 T0=$(date +%s)
 step() { echo "== $* ($(( $(date +%s) - T0 )) s)"; }
 sha() { sha256sum < "$1" | cut -c1-64; }
 
 CMD=${1:-}; [ $# -gt 0 ] && shift
-SNAP= RES= VBM= OUT= INPUTS= KEYSFILE= S2FILE= S2BFILE= XFFILE= DKFILE= REQBS=0 HEADROOM0= KEEP=0 AUMODE0= SSHACC0= CHANNEL=https://tsx-aports.unexceptional.net APKURL0=https://tsx-aports.unexceptional.net
+SNAP= RES= VBM= OUT= INPUTS= KEYSFILE= S2FILE= S2BFILE= XFFILE= DKFILE= PVFILE= R23REL0= PURLS0= EXPREFS= REQBS=0 HEADROOM0= KEEP=0 AUMODE0= SSHACC0= CHANNEL=https://tsx-aports.unexceptional.net APKURL0=https://tsx-aports.unexceptional.net
 while [ $# -gt 0 ]; do
 	case $1 in
 	--snapshot) SNAP=${2:?}; shift;;
@@ -186,6 +218,10 @@ while [ $# -gt 0 ]; do
 	--step2-bin) S2BFILE=${2:?}; shift;;
 	--xfer-bin) XFFILE=${2:?}; shift;;
 	--dev-apk-key) DKFILE=${2:?}; shift;;
+	--provision-bin) PVFILE=${2:?}; shift;;
+	--r23-release) R23REL0=${2:?}; shift;;
+	--provision-url) PURLS0="${PURLS0:+$PURLS0 }${2:?}"; shift;;
+	--expect-refs) EXPREFS=${2:?}; shift;;
 	--require-both-slot) REQBS=1;;
 	--autoupdate-mode) AUMODE0=${2:?}; shift;;
 	--ssh-access) SSHACC0=${2:?}; shift;;
@@ -241,13 +277,16 @@ rootfs_build() {
 		-u KVER -u IMG_MB -u UC_PXX_SPLASH_SIZES -u TSX_DEV_RESCUE_KEYS -u TSX_DEV_RESCUE_HASH \
 		-u UC_PXX_APK_MIRROR -u UC_PXX_MIRROR_URL -u UC_PXX_DEV_OVERLAY -u RTL8363_INIT -u UC_PXX_BOOTCTL -u UC_PXX_REBOOT \
 		-u UC_PXX_STEP2_BOOTCTL_INST -u UC_PXX_STEP2_BIN -u UC_PXX_XFER_BIN -u UC_PXX_DEV_APK_KEY \
-		-u UC_PXX_AUTOUPDATE_MODE -u UC_PXX_SSH_ACCESS \
+		-u UC_PXX_AUTOUPDATE_MODE -u UC_PXX_SSH_ACCESS -u UC_PXX_PROVISION_BIN -u UC_PXX_PROVISION_SHA256 \
+		-u UC_PXX_R23_RELEASE -u UC_PXX_PROVISION_URLS \
 		ALPINE=$ALPINE IMAGE="$IMAGE" PROFILE="$PROFILE" TSX_APK_LOCAL="$SNAP/tsx" \
 		TSX_APK_URL="$APKURL" TSX_BUILD_ID="$VERSION" SOURCE_DATE_EPOCH="$SDE" ROOTFS_UUID="$UUID" \
 		IMG_HEADROOM_MB="$HEADROOM" UC_PXX_PIP_CACHE="$pip" UC_PXX_DOCKER_NET="$net" \
 		AUTHORIZED_KEYS="$AKEYS" UC_PXX_AUTOUPDATE_MODE="${GOT[AUTOUPDATE_MODE]}" UC_PXX_SSH_ACCESS="${GOT[SSH_ACCESS]}" \
 		${S2INST:+UC_PXX_STEP2_BOOTCTL_INST="$S2INST"} ${S2BIN:+UC_PXX_STEP2_BIN="$S2BIN"} ${XFBIN:+UC_PXX_XFER_BIN="$XFBIN"} \
-		${DEVKEY:+UC_PXX_DEV_APK_KEY="$DEVKEY"} "$@" "$src/rootfs/build-rootfs.sh" all
+		${DEVKEY:+UC_PXX_DEV_APK_KEY="$DEVKEY"} \
+		${PVBIN:+UC_PXX_PROVISION_BIN="$PVBIN" UC_PXX_PROVISION_SHA256="${GOT[PROVISION_BIN_SHA256]}" UC_PXX_R23_RELEASE="${GOT[R23_RELEASE]}" UC_PXX_PROVISION_URLS="${GOT[PROVISION_URLS]}"} \
+		"$@" "$src/rootfs/build-rootfs.sh" all
 }
 
 # ---- the inputs ----------------------------------------------------------------
@@ -277,7 +316,8 @@ choose() { if [ -n "$INPUTS" ]; then GOT[$1]=${IN[$1]}; else GOT[$1]=$2; fi; }
 choose FORMAT $FMT
 choose VERSION "dev-${COMMIT:0:12}"
 choose SOURCE_DATE_EPOCH "$(git -C "$HERE" log -1 --format=%ct "$COMMIT")"
-choose PROFILE ha
+# an R23 base (--provision-bin) is the console profile
+choose PROFILE "$([ -n "$PVFILE" ] && echo console || echo ha)"
 choose IMG_HEADROOM_MB "${HEADROOM0:-0}"
 [ -z "$INPUTS" ] || [ -z "$HEADROOM0" ] || [ "$HEADROOM0" = "${IN[IMG_HEADROOM_MB]}" ] || die "--headroom differs from IMG_HEADROOM_MB of the inputs file"
 choose TSX_APK_URL "$APKURL0"
@@ -369,6 +409,32 @@ if [ -n "$DKFILE" ]; then
 else
 	pin DEV_APK_KEY_SHA256 none
 fi
+# an R23 base (--provision-bin): the provisioning set, the references, the bundles
+PVBIN=
+if [ -n "$PVFILE" ]; then
+	[ -f "$PVFILE" ] || die "--provision-bin $PVFILE: no such file"
+	[ "$PROFILE" = console ] || die "--provision-bin (an R23 base) needs PROFILE console, not $PROFILE"
+	[ -n "$S2FILE" ] && [ -n "$XFFILE" ] || die "--provision-bin (an R23 base) needs --step2-bootctl-inst/--step2-bin and --xfer-bin"
+	[ -z "$DKFILE" ] || die "--provision-bin: an R23 base takes no --dev-apk-key"
+	PVBIN=$(readlink -f "$PVFILE")
+	pin PROVISION_BIN_SHA256 "$(sha "$PVBIN")"
+	if [ -n "$INPUTS" ] && [ -n "$R23REL0" ] && [ "$R23REL0" != "${IN[R23_RELEASE]}" ]; then die "--r23-release differs from R23_RELEASE of the inputs file"; fi
+	choose R23_RELEASE "${R23REL0:-$VERSION}"
+	[[ ${GOT[R23_RELEASE]} =~ ^[A-Za-z0-9._+-]{1,48}$ ]] || die "R23_RELEASE '${GOT[R23_RELEASE]}': only letters, digits and . _ + - (1 to 48)"
+	if [ -n "$INPUTS" ] && [ -n "$PURLS0" ] && [ "$PURLS0" != "${IN[PROVISION_URLS]}" ]; then die "--provision-url differs from PROVISION_URLS of the inputs file"; fi
+	choose PROVISION_URLS "${PURLS0:-$PROVISION_URL_DEFAULT}"
+	for u in ${GOT[PROVISION_URLS]}; do
+		[[ $u =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~%/+-]*)?/$ ]] || die "PROVISION_URLS: '$u' is not an http(s) base URL that ends with /"
+	done
+	pin CONTENT_EXCLUDE_SHA256 "$(sha "$T/r23/content-exclude.txt")"
+	pin CLONE_DELTA_SHA256 "$(sha "$T/r23/clone-delta.json")"
+	REQBS=1
+	echo "WARNING: an R23 base build (--provision-bin): the provisioning set in the rootfs; for no unit before its RULES lines"
+else
+	[ -z "$R23REL0$PURLS0$EXPREFS" ] || die "--r23-release, --provision-url and --expect-refs need --provision-bin"
+	for k in PROVISION_BIN_SHA256 R23_RELEASE PROVISION_URLS CONTENT_EXCLUDE_SHA256 CLONE_DELTA_SHA256; do pin $k none; done
+fi
+[ -z "$EXPREFS" ] || [ -f "$EXPREFS" ] || die "--expect-refs $EXPREFS: no such file"
 
 if [ "$CMD" = prime ]; then
 	for t in curl awk; do command -v $t >/dev/null || die "$t is not installed"; done
@@ -449,6 +515,20 @@ grep -E '^(rootfs total|root password|kernel modules)' "$RO/rootfs.sizes" || tru
 UC_PXX_CHECK_SKIP_EXT4=1 sh "$W/src/ci/check-no-proprietary.sh" "$RO" > "$W/no-proprietary.log" 2>&1 ||
 	{ cat "$W/no-proprietary.log"; die "the rootfs holds a vendor file"; }
 $PY "$T/payload.py" scan-tar "$RO/rootfs.tar.gz" || die "the rootfs holds a Rockchip resource"
+if [ -n "$PVBIN" ]; then
+	[ -f "$RO/r23/refs.txt" ] && [ -f "$RO/rootfs.ext4.zst" ] || die "the R23 base build made no r23/refs.txt or rootfs.ext4.zst"
+	cp -a "$RO/r23" "$OUT/r23"
+	if [ -n "$EXPREFS" ]; then
+		n=0
+		while IFS= read -r l || [ -n "$l" ]; do
+			case $l in ''|'#'*) continue;; REF_B_*|PROFILES_JSON=*) continue;; esac
+			grep -qxF -- "$l" "$OUT/r23/refs.txt" || die "--expect-refs: '$l' is not in this build's refs.txt (r23/refs.txt)"
+			n=$((n + 1))
+		done < "$EXPREFS"
+		echo "--expect-refs: $n lines equal ($EXPREFS)"
+	fi
+	grep -E '^(REF_|BUNDLE_|INDEX_|PROFILES_JSON)' "$OUT/r23/refs.txt"
+fi
 
 step "2. the boot template (/boot/uc-pxx-lts.img of the kernel package in the rootfs)"
 mkdir -p "$W/k"
@@ -463,7 +543,8 @@ KREL=$(sed -n 's/^release=//p' "$W/template.info")
 $PY "$T/payload.py" initramfs "$TPL" "$W/initramfs.cpio" > "$W/initramfs.info" || die "no initramfs in the template"
 cat "$W/initramfs.info"
 grep -q '^program_rtl8363_init=missing' "$W/initramfs.info" && echo "WARNING: the initramfs has no rtl8363-init (the rescue cannot set up the switch)"
-$PY "$T/payload.py" both-slot "$RO/rootfs.tar.gz" "$W/initramfs.cpio" "$W/src" > "$W/both-slot.txt" ||
+PVARGS=(); [ -z "$PVBIN" ] || PVARGS=(--provision-sha256 "${GOT[PROVISION_BIN_SHA256]}")
+$PY "$T/payload.py" both-slot "$RO/rootfs.tar.gz" "$W/initramfs.cpio" "$W/src" "${PVARGS[@]}" > "$W/both-slot.txt" ||
 	die "the both-slot check failed"
 cat "$W/both-slot.txt"
 BOTH=$(sed -n 's/^both_slot=//p' "$W/both-slot.txt")
@@ -484,10 +565,20 @@ cat "$W/vbmeta-patch.info"
 step "5. manifest.json"
 mkdir -p "$W/p"
 cp "$TPL" "$W/p/boot-template.img"
-cp "$RO/rootfs.ext4" "$W/p/rootfs.ext4"
+ZARGS=()
+if [ -n "$PVBIN" ]; then
+	# schema 3: the folder holds rootfs.ext4.zst, the unpacked file stays next to it
+	cp "$RO/rootfs.ext4" "$OUT/rootfs.ext4"
+	cp "$RO/rootfs.ext4.zst" "$W/p/rootfs.ext4.zst"
+	ROOTFS=$OUT/rootfs.ext4
+	ZARGS=(--rootfs-zst "$W/p/rootfs.ext4.zst")
+else
+	cp "$RO/rootfs.ext4" "$W/p/rootfs.ext4"
+	ROOTFS=$W/p/rootfs.ext4
+fi
 rc=0
 $PY "$T/payload.py" manifest --version "$VERSION" --pin "$HERE/kernel/KERNEL_REV.lts" --template "$W/p/boot-template.img" \
-	--resource "$RES" --assembled "$V/assembled.img" --rootfs "$W/p/rootfs.ext4" \
+	--resource "$RES" --assembled "$V/assembled.img" --rootfs "$ROOTFS" "${ZARGS[@]}" \
 	--vbmeta "$VBM" --vbmeta-patched "$V/vbmeta-patched.img" --out "$W/p/manifest.json" \
 	--allow-over-cap > "$W/manifest.log" || rc=$?
 cat "$W/manifest.log"
@@ -502,7 +593,8 @@ mv "$W/p" "$OUT/$DIR"
 cp "$RO/rootfs.manifest" "$RO/rootfs.sizes" "$W/both-slot.txt" "$OUT/"
 
 step "6. the record"
-TS=$(stat -c %s "$OUT/$DIR/boot-template.img") RS=$(stat -c %s "$OUT/$DIR/rootfs.ext4") MS=$(stat -c %s "$OUT/$DIR/manifest.json")
+RF=rootfs.ext4; [ -z "$PVBIN" ] || RF=rootfs.ext4.zst
+TS=$(stat -c %s "$OUT/$DIR/boot-template.img") RS=$(stat -c %s "$OUT/$DIR/$RF") MS=$(stat -c %s "$OUT/$DIR/manifest.json")
 DRIVE=$((1200 * 1048576))
 TOTAL=$((TS + RS + MS))
 {
@@ -527,6 +619,10 @@ TOTAL=$((TS + RS + MS))
 	else echo "the USB set: uc-pxx-xfer ${GOT[XFER_BIN_SHA256]}, the service uc-pxx-usb (the USB network off by default), /usr/share/uc-pxx-usb/finish.json"; fi
 	if [ "$BOTH" = yes ]; then echo "both-slot build: yes (the boot control, slot and data files of $COMMIT; both-slot.txt)"
 	else echo "both-slot build: NO (both-slot.txt): a payload for slot A only"; fi
+	if [ -n "$PVBIN" ]; then
+		echo "R23 base: uc-pxx-provision ${GOT[PROVISION_BIN_SHA256]}, release ${GOT[R23_RELEASE]}, bundle URLs ${GOT[PROVISION_URLS]}; manifest schema 3 (rootfs.ext4.zst; rootfs.ext4 next to the folder)"
+		grep -E '^(REF_|BUNDLE_|INDEX_|PROFILES_JSON)' "$OUT/r23/refs.txt" | sed 's/^/R23 /'
+	fi
 	if [ "${GOT[DEV_APK_KEY_SHA256]}" != none ]; then
 		echo "DEV PACKAGES: the uc-pxx packages come from a private build signed by ${DKFILE##*/} (sha256 ${GOT[DEV_APK_KEY_SHA256]}); the image does not trust that key; never publish this payload"
 	fi
@@ -538,7 +634,12 @@ TOTAL=$((TS + RS + MS))
 	[ -n "$INPUTS" ] || echo "STATUS: DEV BUILD"
 } > "$OUT/build-info.txt"
 cat "$OUT/build-info.txt"
-(cd "$OUT" && sha256sum "$DIR/manifest.json" "$DIR/boot-template.img" "$DIR/rootfs.ext4" inputs.txt rootfs.manifest both-slot.txt > SHA256SUMS)
+if [ -n "$PVBIN" ]; then
+	(cd "$OUT" && sha256sum "$DIR/manifest.json" "$DIR/boot-template.img" "$DIR/rootfs.ext4.zst" rootfs.ext4 inputs.txt rootfs.manifest both-slot.txt \
+		r23/refs.txt r23/profiles.json r23/*.tar r23/*.tar.json r23/ref-*.manifest r23/installed-*.txt > SHA256SUMS)
+else
+	(cd "$OUT" && sha256sum "$DIR/manifest.json" "$DIR/boot-template.img" "$DIR/rootfs.ext4" inputs.txt rootfs.manifest both-slot.txt > SHA256SUMS)
+fi
 cat "$OUT/SHA256SUMS"
 own_back "$W/pip"
 [ "$KEEP" = 1 ] || rm -rf "$W"

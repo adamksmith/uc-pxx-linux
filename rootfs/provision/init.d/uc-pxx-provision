@@ -1,0 +1,47 @@
+#!/sbin/openrc-run
+# The first-boot provisioning service of an R23 base slot (uc-pxx-installer
+# `uc-pxx-provision service`, DESIGN-R23 §3.1). Only a STEP-2 base build has
+# this script (mkrootfs.sh, build option UC_PXX_PROVISION_BIN); every other
+# image has no file of that name, and step 2's difference removes it from
+# slot A (clone-delta.json).
+#
+# It runs the program once per boot, in the background: the program waits
+# until this slot is marked and is the slot that boots, then (no done record
+# of its pin) for the page's PROVISION COMMIT over the slot's USB link, takes
+# tsx-autoupdate's locks, installs the chosen profile from its pinned bundle
+# (/usr/share/uc-pxx-provision/profiles.json), runs
+# /usr/share/uc-pxx-provision/profile-apply.sh, checks the tree against the
+# profile's ref_b and writes its done record /var/lib/uc-pxx-provision/done.
+# It writes only files of the running root file system and of /run, never a
+# partition, an A/B sector or TEE state.
+#
+# The uc-pxx-step2 pattern: no start-stop-daemon (the program ends by itself),
+# its own session (setsid), the pid file once per boot. A stop does NOT end
+# it: an `apk add` is never cut short by a signal; the program ends by itself.
+description="Mainline first-boot provisioning (uc-pxx-provision service)"
+prog=/usr/libexec/uc-pxx-provision/uc-pxx-provision
+prog_pidfile=/run/uc-pxx-provision.pid
+prog_log=/var/log/uc-pxx-provision.log
+depend() { need localmount; after uc-pxx-boot-ok uc-pxx-usb networking chronyd tsx-autoupdate; }
+
+start() {
+	ebegin "Starting uc-pxx-provision service in the background"
+	if [ ! -x "$prog" ] || ! command -v setsid > /dev/null; then
+		eend 1 "$prog or setsid is missing"
+		return 1
+	fi
+	if [ -e "$prog_pidfile" ]; then
+		ewarn "uc-pxx-provision service started before in this boot, it does not start again"
+		eend 0
+		return 0
+	fi
+	echo "== $(date -u '+%Y-%m-%dT%H:%M:%SZ') boot $(cat /proc/sys/kernel/random/boot_id 2> /dev/null)" >> "$prog_log"
+	setsid "$prog" service < /dev/null >> "$prog_log" 2>&1 &
+	echo $! > "$prog_pidfile"
+	eend 0
+}
+
+stop() {
+	ebegin "uc-pxx-provision service: not stopped (it ends by itself)"
+	eend 0
+}

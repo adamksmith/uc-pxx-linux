@@ -45,6 +45,12 @@
 #               step-2 image is for no unit before its RULES line. With it,
 #               UC_PXX_STEP2_BIN (required): the pinned uc-pxx-step2 binary;
 #               the image then also has the service uc-pxx-step2 (mkrootfs.sh)
+#   UC_PXX_PROVISION_BIN, UC_PXX_PROVISION_SHA256, UC_PXX_R23_RELEASE,
+#   UC_PXX_PROVISION_URLS  an R23 base build (mkrootfs.sh): the uc-pxx-provision
+#               binary and its pinned sha256, the release and the bundle URLs.
+#               The build then also makes the R23 references, the profile
+#               bundles and profiles.json (rootfs/r23-refs.sh, out/r23/). It
+#               needs UC_PXX_APK_MIRROR (the snapshot)
 #   UC_PXX_DEV_APK_KEY  TEST ONLY: the public key (NAME.rsa.pub) of a private
 #               build of uc-pxx packages that are not published yet (a local
 #               apk tree signed with a key of the build host). mkrootfs.sh
@@ -337,6 +343,14 @@ rootfs() {
 	fi
 	# the USB set of a both-slot build (mkrootfs.sh UC_PXX_XFER_BIN)
 	in_file UC_PXX_XFER_BIN "${UC_PXX_XFER_BIN:-}"
+	# the provisioning set and the references of an R23 base (mkrootfs.sh)
+	in_file UC_PXX_PROVISION_BIN "${UC_PXX_PROVISION_BIN:-}"
+	if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
+		[ -n "${UC_PXX_APK_MIRROR:-}" ] || { echo "UC_PXX_PROVISION_BIN (an R23 base) needs UC_PXX_APK_MIRROR (the snapshot)"; exit 1; }
+		echo "WARNING: UC_PXX_PROVISION_BIN: an R23 base build with the provisioning set. For no unit before its RULES lines."
+	fi
+	dargs+=(-e UC_PXX_PROVISION_SHA256="${UC_PXX_PROVISION_SHA256:-}" -e UC_PXX_R23_RELEASE="${UC_PXX_R23_RELEASE:-}" \
+		-e UC_PXX_PROVISION_URLS="${UC_PXX_PROVISION_URLS:-}")
 	# the tsx-autoupdate mode and the SSH access of a mainline payload (mkrootfs.sh)
 	case "${UC_PXX_AUTOUPDATE_MODE:-}" in ''|manual|auto) ;; *) echo "UC_PXX_AUTOUPDATE_MODE='$UC_PXX_AUTOUPDATE_MODE' is not manual or auto"; exit 1;; esac
 	case "${UC_PXX_SSH_ACCESS:-}" in ''|keys|setup) ;; *) echo "UC_PXX_SSH_ACCESS='$UC_PXX_SSH_ACCESS' is not keys or setup"; exit 1;; esac

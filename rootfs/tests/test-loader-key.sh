@@ -131,7 +131,7 @@ grep -Eq '^(supervisor|respawn_|command_background|command=)' "$OS" && bad "the 
 grep -q 'after devfs' "$OS" && grep -q 'before udev' "$OS" && ok "the script starts after devfs and before udev" || bad "wrong order"
 grep -v '^#' "$OS" | grep -Eq 'need|udev-settle|localmount' && bad "the script waits for a service" || ok "no need on udev-settle or localmount"
 awk '$1 == "svc" && $2 == "sysinit" && $3 == "uc-pxx-loader-key" { f = 1 } END { exit !f }' "$HERE/profiles/console.list" && ok "console.list: runlevel sysinit" || bad "not in sysinit"
-grep -q 'TSX_SVC_SYSINIT' "$HERE/mkrootfs.sh" && ok "mkrootfs.sh adds the sysinit services" || bad "mkrootfs.sh has no sysinit list"
+grep -q 'svc sysinit .*$SVC_SYSINIT' "$HERE/profile-apply.sh" && ok "profile-apply.sh (the profile steps of mkrootfs.sh) adds the sysinit services" || bad "profile-apply.sh has no sysinit list"
 
 echo "== /init: the check at the boot =="
 # take the functions loader_dev, loader_held, loader_show, loader_check out of /init

@@ -20,11 +20,13 @@
 # After tsx-autoupdate (STEP2-STOP-HOLD-2026-11-11.md §4 item 5, a second
 # layer): its start (`tsx-autoupdate boot`) writes this boot's restart block,
 # also a STOP hold of an earlier boot (`hold stop step2`), before step 2 runs.
+# After uc-pxx-provision (DESIGN-R23 §3.1): on an R23 base slot step 2 copies
+# the provisioned B to A, so it starts after the provisioning service.
 description="Mainline step 2 (uc-pxx-step2 service)"
 prog=/usr/libexec/uc-pxx-step2/uc-pxx-step2
 prog_pidfile=/run/uc-pxx-step2.pid
 prog_log=/var/log/uc-pxx-step2.log
-depend() { need localmount; after uc-pxx-boot-ok uc-pxx-lvm kiosk tsx-autoupdate; }
+depend() { need localmount; after uc-pxx-boot-ok uc-pxx-lvm kiosk tsx-autoupdate uc-pxx-provision; }
 
 start() {
 	ebegin "Starting uc-pxx-step2 service in the background"
