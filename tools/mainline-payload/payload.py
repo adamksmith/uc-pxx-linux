@@ -460,7 +460,7 @@ STEP2_MARKER = "etc/tsx/step2-bootctl-inst"
 STEP2_SET = {
     "usr/libexec/uc-pxx-step2": ("dir", 0o700),
     "usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst": ("20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203", 0o700),
-    "usr/libexec/uc-pxx-step2/uc-pxx-step2": ("e6cf7147c9ef08e375246660ad5b29f54542a902312357e0c622d919162b2a68", 0o700),
+    "usr/libexec/uc-pxx-step2/uc-pxx-step2": ("05d2d48bd8a43123b161061dfed472daf627bc8ad1ca72c73e700527d69ef515", 0o700),
     "etc/init.d/uc-pxx-step2": ("src:rootfs/step2/init.d/uc-pxx-step2", 0o755),
     "etc/conf.d/uc-pxx-step2": ("src:rootfs/step2/conf.d/uc-pxx-step2", 0o644),
     "etc/uc-pxx-step2": ("dir", 0o755),
@@ -474,7 +474,8 @@ STEP2_SET = {
 STEP2_SET_EU = {k: v for k, v in STEP2_SET.items() if not k.startswith("etc/uc-pxx-step2")}
 # the two binaries by sha256 (a copy under another name is found by its bytes)
 STEP2_SHAS = {v: k for k, (v, m) in STEP2_SET.items() if re.fullmatch("[0-9a-f]{64}", v)}
-STEP2_SIZES = (777976, 4980860)
+# r2 and uc-pxx-step2 05d2d48b... of mainline-rc-10 514d3c8 (R23-BASE-REVIEW MINOR-2: with the pin)
+STEP2_SIZES = (777976, 5374076)
 # The USB set of every both-slot build (mkrootfs.sh UC_PXX_XFER_BIN,
 # docs/usb.md; uc-pxx-installer mainline-rc-4): exactly these paths, the same
 # forms as STEP2_SET. A both-slot payload must have it; an entry named

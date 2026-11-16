@@ -593,15 +593,17 @@ fi
 STEP2_INST_SHA256=20aa6bc5d2146faace461eec0b50f741c681b3c58827788b9b806d9444b00203
 STEP2_INST_PATH=usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst
 # uc-pxx-step2 of uc-pxx-installer (ci/build-step2.sh, built twice
-# byte-identical; its gate lists the normal release payloads of the same
-# release: e6cf7147... of uc-pxx-installer mainline-rc-9 811f1c2, whose gate lists 0.2.0-rc9
-# (90dd4b74) and 0.2.0-rc9-eu (7cc16383, the end-user payload); the record
-# MAINLINE-RC9-2026-11-14.md). Earlier
+# byte-identical): 05d2d48b... (5374076 bytes) of uc-pxx-installer mainline-rc-10
+# 514d3c8, the R23 release: its clone gate holds the three profiles of
+# 0.2.0-rc10 (ref_a, ref_b, bundles of the stage-1 build of 8baacf1) and the pin
+# of uc-pxx-provision e2d676a9...; its mainline gate lists no normal payload
+# (the record MAINLINE-RC10-RELEASE-2026-11-15.md). Earlier: e6cf7147... of
+# mainline-rc-9 811f1c2 (RC-9, gate 0.2.0-rc9 90dd4b74 and 0.2.0-rc9-eu 7cc16383). Earlier
 # pins: 104e752f... of mainline-rc-8 1fcc625 (RC-8), dceb6953... of mainline-rc-8 15d3b2c (the fix-only build), f092d15e... of mainline-rc-7 0d8b5a8, 930a2d18... of mainline-rc-6 81a321f, fe4502b9... of mainline-rc-6, aace79f3... of mainline-rc-5,
 # a44632a6... of d7e2113,
 # ca1c1e67... of mainline-rc-4 6ac0b2c, b857680f... of 22eaf31, 524e89ba... of mainline-rc-3 3c397a7, 7049463f... of d754663, 13ea2508... of 6aab316, 3c2ba06f... of mainline-rc-2 d105ba2, b8c2a6d9... of c0d8f0b, 1cbb32ae... of mainline-rc be239e3,
 # f7cc1d33... of 1605579, a4e753cc... of 9627b27 and b7710fa3... of mainline-step2-rest b9b2e98); NOT yet reviewed for the safety rules: a new build needs a new pin here
-STEP2_BIN_SHA256=e6cf7147c9ef08e375246660ad5b29f54542a902312357e0c622d919162b2a68
+STEP2_BIN_SHA256=05d2d48bd8a43123b161061dfed472daf627bc8ad1ca72c73e700527d69ef515
 STEP2_BIN_PATH=usr/libexec/uc-pxx-step2/uc-pxx-step2
 STEP2_DATA_SHA256=9162c65df08ac5577e38a2fe124d8cb1434b9b2bcfe787d6fba76055b8006791
 STEP2_DATA_PATH=usr/sbin/uc-pxx-data-migrate
@@ -647,7 +649,7 @@ s2=$(cd $R && find . -name 'uc-pxx-step2*' | sed 's#^\./##' | sort | tr '\n' ' '
 # a copy of r2 or uc-pxx-step2 under another name, by its bytes (review r2):
 # only files of their sizes are hashed (the sizes of the given binaries)
 [ -z "${UC_PXX_STEP2_BIN:-}" ] || [ ! -f "$UC_PXX_STEP2_BIN" ] || STEP2_BIN_SIZE=${STEP2_BIN_SIZE:-$(stat -c %s "$UC_PXX_STEP2_BIN")}
-cp2=$(cd $R && find . -type f \( -size ${STEP2_INST_SIZE:-777976}c -o -size ${STEP2_BIN_SIZE:-4980860}c \) -exec sha256sum {} + |
+cp2=$(cd $R && find . -type f \( -size ${STEP2_INST_SIZE:-777976}c -o -size ${STEP2_BIN_SIZE:-5374076}c \) -exec sha256sum {} + |
 	awk -v a="$STEP2_INST_SHA256" -v b="$STEP2_BIN_SHA256" -v pa="./$STEP2_INST_PATH" -v pb="./$STEP2_BIN_PATH" \
 		'($1 == a && $2 != pa) || ($1 == b && $2 != pb) { print $2 }' | tr '\n' ' ')
 [ -z "$cp2" ] || { echo "ERROR: copies of uc-pxx-bootctl-inst or uc-pxx-step2 in the image: $cp2"; exit 1; }
@@ -691,9 +693,15 @@ fi
 # these names. Such an image is for no unit before its RULES lines.
 PROV_BIN_PATH=usr/libexec/uc-pxx-provision/uc-pxx-provision
 PROV_FILES="etc/conf.d/uc-pxx-provision etc/init.d/uc-pxx-provision etc/runlevels/default/uc-pxx-provision usr/libexec/uc-pxx-provision $PROV_BIN_PATH usr/share/uc-pxx-provision "
+# The reviewed pin of uc-pxx-provision (R23-BASE-REVIEW MINOR-3): e2d676a9...
+# (6946940 bytes) of uc-pxx-installer mainline-rc-10 5d2d88b (ci/build-provision.sh,
+# twice byte-identical; it holds the clone gate's profiles of 0.2.0-rc10). The
+# input UC_PXX_PROVISION_SHA256 must be it. A new build needs a new pin here.
+PROV_PIN_SHA256=e2d676a9e2e2ebe94206077bff532b01135c194e04b58635317c437360aa733b
 PROV_SHA256=
 if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
 	PROV_SHA256=${UC_PXX_PROVISION_SHA256:-}
+	[ "$PROV_SHA256" = "$PROV_PIN_SHA256" ] || { echo "ERROR: UC_PXX_PROVISION_SHA256 '$PROV_SHA256' is not the pinned uc-pxx-provision $PROV_PIN_SHA256"; exit 1; }
 	case $PROV_SHA256 in *[!0-9a-f]*|'') echo "ERROR: UC_PXX_PROVISION_BIN needs UC_PXX_PROVISION_SHA256 (64 lower-case hex digits)"; exit 1;; esac
 	[ ${#PROV_SHA256} = 64 ] || { echo "ERROR: UC_PXX_PROVISION_SHA256 is not 64 hex digits"; exit 1; }
 	sum=$(sha256sum "$UC_PXX_PROVISION_BIN" | cut -d' ' -f1)
