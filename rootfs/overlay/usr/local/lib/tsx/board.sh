@@ -112,8 +112,10 @@ TSX_BT_CHIP=${TSX_BT_CHIP:-none}
 TSX_CONFIG_RELOAD=${TSX_CONFIG_RELOAD:-uc-pxx-als uc-pxx-presence}
 # The address comes from the controller, so BT_MAC cannot apply.
 TSX_BT_MAC_SETTABLE=${TSX_BT_MAC_SETTABLE:-no}
-# TODO: the Bluetooth proxy is not tested on this board. Turn it on after the test.
-TSX_BT_PROXY_DEFAULT=${TSX_BT_PROXY_DEFAULT:-off}
+# The passive Bluetooth proxy is on by default (tested on unit 4, 2026-11-17:
+# 923 adverts of 30 devices in 15 s through tsx-esphome). BT_ACTIVE (GATT
+# connections) stays off: the active central fails on this controller.
+TSX_BT_PROXY_DEFAULT=${TSX_BT_PROXY_DEFAULT:-on}
 TSX_MAC_SOURCE=${TSX_MAC_SOURCE:-cfg}
 TSX_SERIAL_CONSOLE=${TSX_SERIAL_CONSOLE:-ttyS2}
 # TODO: Chromium with panfrost is not tested. Fill in the flags that it needs.

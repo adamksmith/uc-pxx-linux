@@ -573,4 +573,6 @@ The tests run on a host and need no unit. The workflow `tests.yml` runs them.
   the glass.
 - A data volume check for the first boot (`tsx-data` of common).
 - Chromium flags for panfrost (`TSX_BROWSER_GL_FLAGS`).
-- The Bluetooth proxy default (`TSX_BT_PROXY_DEFAULT` is `off` until tested).
+- Bluetooth: the passive proxy is on by default (`TSX_BT_PROXY_DEFAULT=on`,
+  tested 2026-11-17); `BT_ACTIVE` (GATT connections) stays off until the active
+  central works on the BCM4345C5.
