@@ -531,7 +531,9 @@ esac
 # uc-pxx-xfer 62421c48... of uc-pxx-installer mainline-rc-10 fd90ed4 (the
 # kinds step1, consent and provision; ci/build-xfer.sh, twice byte-identical;
 # its bytes depend on no gate data). Earlier: 42d764e0... (RC-5 to RC-9).
-XFER_SHA256=62421c487cf0233d1cee2844f623bf4de120a3ec7daa599bfb6f6465d6fe5d60
+# mainline-rc-10c: 3262ce29... of uc-pxx-installer mainline-rc-10c 575fa16 (the bind
+# watch of the step-1 service; its bytes depend on no gate data). It replaces 62421c48...
+XFER_SHA256=3262ce2964e932dda2195d2466fae346cea490ce7e602822bdf676736b71fc75
 XFER_PATH=usr/libexec/uc-pxx-xfer/uc-pxx-xfer
 XFER_ID=990
 USB_FILES="etc/conf.d/uc-pxx-usb etc/init.d/uc-pxx-usb etc/runlevels/default/uc-pxx-usb etc/ssh/sshd_config.d/uc-pxx-usb.conf usr/libexec/uc-pxx-xfer usr/libexec/uc-pxx-xfer/uc-pxx-xfer usr/share/uc-pxx-usb "
@@ -608,7 +610,9 @@ STEP2_INST_PATH=usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst
 # uc-pxx-installer mainline-rc-10b 3f06cc2 (ci/build-step2.sh; its clone gate holds the three
 # profiles of the RC-10b stage-1 refs (uc-pxx-linux cf6393d) and the pin of uc-pxx-provision
 # 6dfc8268...; no content compare of B or A). It replaces 65eeed56... of RC-10 above.
-STEP2_BIN_SHA256=86d305ecfdcb9c6c027d1420e49b6f4ba0b77079e209807a2eeb121e4f4fa2cc
+# mainline-rc-10c STAGE 1 (NOT FOR DEVICE): the stand-in 4400645b... (the interim build of
+# uc-pxx-installer mainline-rc-10c 575fa16, the RC-10b gate data); the stage-2 commit pins the release build.
+STEP2_BIN_SHA256=4400645b6768a6a084efd23e116761392d921f7220b86d0e33cba6e6ee996dac
 STEP2_BIN_PATH=usr/libexec/uc-pxx-step2/uc-pxx-step2
 STEP2_DATA_SHA256=9162c65df08ac5577e38a2fe124d8cb1434b9b2bcfe787d6fba76055b8006791
 STEP2_DATA_PATH=usr/sbin/uc-pxx-data-migrate
@@ -708,7 +712,9 @@ PROV_FILES="etc/conf.d/uc-pxx-provision etc/init.d/uc-pxx-provision etc/runlevel
 # mainline-rc-10b: 6dfc8268... (6946940 bytes) of uc-pxx-installer mainline-rc-10b baed193
 # (ci/build-provision.sh; the health gate in place of the content check against ref_b; the gate
 # profiles of the RC-10b stage-1 refs). It replaces 65cd9cf1... of RC-10 above.
-PROV_PIN_SHA256=6dfc8268754e805066e92c77392540fda1721eb60521e90c03cc7fff14f54abb
+# mainline-rc-10c STAGE 1 (NOT FOR DEVICE): the stand-in 26472c8f... (the interim build of
+# mainline-rc-10c 575fa16: the rc-service bounds, the RC-10b gate profiles); the stage-2 commit pins the release build.
+PROV_PIN_SHA256=26472c8f688085761e77936462c102e5fe699ceb73369fadfef78222d58cf669
 PROV_SHA256=
 if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
 	PROV_SHA256=${UC_PXX_PROVISION_SHA256:-}
