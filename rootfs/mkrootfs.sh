@@ -610,9 +610,10 @@ STEP2_INST_PATH=usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst
 # uc-pxx-installer mainline-rc-10b 3f06cc2 (ci/build-step2.sh; its clone gate holds the three
 # profiles of the RC-10b stage-1 refs (uc-pxx-linux cf6393d) and the pin of uc-pxx-provision
 # 6dfc8268...; no content compare of B or A). It replaces 65eeed56... of RC-10 above.
-# mainline-rc-10c STAGE 1 (NOT FOR DEVICE): the stand-in 4400645b... (the interim build of
-# uc-pxx-installer mainline-rc-10c 575fa16, the RC-10b gate data); the stage-2 commit pins the release build.
-STEP2_BIN_SHA256=4400645b6768a6a084efd23e116761392d921f7220b86d0e33cba6e6ee996dac
+# mainline-rc-10c: 56066141... (5374076 bytes) of uc-pxx-installer mainline-rc-10c-int ca67d02
+# (ci/build-step2.sh; its clone gate holds the three 0.2.0-rc10c profiles of the RC-10c stage-1 refs
+# (uc-pxx-linux 979c4b0) and the pin of uc-pxx-provision 8b22b4e0...). It replaces 86d305ec... of RC-10b above.
+STEP2_BIN_SHA256=5606614169004eb13a99551c75d07893dd6479ad61bbdcf917a21ae77b7e5aa1
 STEP2_BIN_PATH=usr/libexec/uc-pxx-step2/uc-pxx-step2
 STEP2_DATA_SHA256=9162c65df08ac5577e38a2fe124d8cb1434b9b2bcfe787d6fba76055b8006791
 STEP2_DATA_PATH=usr/sbin/uc-pxx-data-migrate
@@ -712,9 +713,10 @@ PROV_FILES="etc/conf.d/uc-pxx-provision etc/init.d/uc-pxx-provision etc/runlevel
 # mainline-rc-10b: 6dfc8268... (6946940 bytes) of uc-pxx-installer mainline-rc-10b baed193
 # (ci/build-provision.sh; the health gate in place of the content check against ref_b; the gate
 # profiles of the RC-10b stage-1 refs). It replaces 65cd9cf1... of RC-10 above.
-# mainline-rc-10c STAGE 1 (NOT FOR DEVICE): the stand-in 26472c8f... (the interim build of
-# mainline-rc-10c 575fa16: the rc-service bounds, the RC-10b gate profiles); the stage-2 commit pins the release build.
-PROV_PIN_SHA256=26472c8f688085761e77936462c102e5fe699ceb73369fadfef78222d58cf669
+# mainline-rc-10c: 8b22b4e0... (6946940 bytes) of uc-pxx-installer mainline-rc-10c-int 1b3ddf6
+# (ci/build-provision.sh; the rc-service bounds of the health gate; the gate profiles of the RC-10c
+# stage-1 refs). It replaces 6dfc8268... of RC-10b above.
+PROV_PIN_SHA256=8b22b4e08d43b9aec3245dc943dd2f54f5062026330b10190abfff8236891d3f
 PROV_SHA256=
 if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
 	PROV_SHA256=${UC_PXX_PROVISION_SHA256:-}
