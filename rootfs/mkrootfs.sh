@@ -604,9 +604,11 @@ STEP2_INST_PATH=usr/libexec/uc-pxx-step2/uc-pxx-bootctl-inst
 # a44632a6... of d7e2113,
 # ca1c1e67... of mainline-rc-4 6ac0b2c, b857680f... of 22eaf31, 524e89ba... of mainline-rc-3 3c397a7, 7049463f... of d754663, 13ea2508... of 6aab316, 3c2ba06f... of mainline-rc-2 d105ba2, b8c2a6d9... of c0d8f0b, 1cbb32ae... of mainline-rc be239e3,
 # f7cc1d33... of 1605579, a4e753cc... of 9627b27 and b7710fa3... of mainline-step2-rest b9b2e98); NOT yet reviewed for the safety rules: a new build needs a new pin here
-# mainline-rc-10b STAGE 1 (NOT FOR DEVICE): the stand-in b4a4a478... (the interim build of
-# uc-pxx-installer mainline-rc-10b d5fbd4a, the old keeper pin); the stage-2 commit pins the release build.
-STEP2_BIN_SHA256=b4a4a478c9c9269ee23fcbbd0391793dff19d4387ebdbbb8135b191c29c23d00
+# mainline-rc-10b (the release of the health-based gate): 86d305ec... (5374076 bytes) of
+# uc-pxx-installer mainline-rc-10b 3f06cc2 (ci/build-step2.sh; its clone gate holds the three
+# profiles of the RC-10b stage-1 refs (uc-pxx-linux cf6393d) and the pin of uc-pxx-provision
+# 6dfc8268...; no content compare of B or A). It replaces 65eeed56... of RC-10 above.
+STEP2_BIN_SHA256=86d305ecfdcb9c6c027d1420e49b6f4ba0b77079e209807a2eeb121e4f4fa2cc
 STEP2_BIN_PATH=usr/libexec/uc-pxx-step2/uc-pxx-step2
 STEP2_DATA_SHA256=9162c65df08ac5577e38a2fe124d8cb1434b9b2bcfe787d6fba76055b8006791
 STEP2_DATA_PATH=usr/sbin/uc-pxx-data-migrate
@@ -703,9 +705,10 @@ PROV_FILES="etc/conf.d/uc-pxx-provision etc/init.d/uc-pxx-provision etc/runlevel
 # (6946940 bytes) of uc-pxx-installer mainline-rc-10 370343f (ci/build-provision.sh,
 # twice byte-identical; it holds the clone gate's profiles of 0.2.0-rc10). The
 # input UC_PXX_PROVISION_SHA256 must be it. A new build needs a new pin here.
-# mainline-rc-10b STAGE 1 (NOT FOR DEVICE): the stand-in 55a6978b... (the interim build of
-# mainline-rc-10b d5fbd4a: the health gate, the RC-10 gate profiles); the stage-2 commit pins the release build.
-PROV_PIN_SHA256=55a6978bad2682311bf72f71c354dfe37e92a8fee5982d350f6a40fd131f2d41
+# mainline-rc-10b: 6dfc8268... (6946940 bytes) of uc-pxx-installer mainline-rc-10b baed193
+# (ci/build-provision.sh; the health gate in place of the content check against ref_b; the gate
+# profiles of the RC-10b stage-1 refs). It replaces 65cd9cf1... of RC-10 above.
+PROV_PIN_SHA256=6dfc8268754e805066e92c77392540fda1721eb60521e90c03cc7fff14f54abb
 PROV_SHA256=
 if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
 	PROV_SHA256=${UC_PXX_PROVISION_SHA256:-}
