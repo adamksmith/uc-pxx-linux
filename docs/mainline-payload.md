@@ -176,7 +176,8 @@ tools/mainline-payload/build.sh build --snapshot SNAP --resource RESOURCE --vbme
 - `--require-both-slot` stops the build unless the payload is a both-slot
   build of the commit (below).
 - `--autoupdate-mode manual|auto` (default `manual`; the RC-10c release inputs
-  use `auto`, owner 2026-11-17) sets the tsx-autoupdate
+  use `manual`, owner 2026-11-17: the update system is verified on hardware
+  first) sets the tsx-autoupdate
   mode of the slot. `manual` writes `MODE=manual` and `AUTO_RESTART=off` into
   `/etc/tsx/autoupdate.conf`: the slot never installs by itself, and an
   install from Home Assistant (or `tsx-autoupdate now`) does not restart the
