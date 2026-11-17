@@ -69,7 +69,9 @@ rc=$(step sh -c "mkdir -p $T/R/usr/local/bin; cp $T/inst $T/R/usr/local/bin/tool
 cat > "$T/extra.sh" <<'EOX'
 mkdir -p "$1/etc/uc-pxx-step2"; : > "$1/etc/uc-pxx-step2/auto"
 EOX
-sed -i 's|^	# the two folders hold exactly their files|	[ -z "${TEST_EXTRA:-}" ] \|\| sh "$TEST_EXTRA" "$R"\n	# the two folders hold exactly their files|' "$T/step-t.sh"
+# the hook goes before the check, at its indent (the check is in a nested block)
+sed -i 's|^\([[:space:]]*\)# the two folders hold exactly their files|\1[ -z "${TEST_EXTRA:-}" ] \|\| sh "$TEST_EXTRA" "$R"\n\1# the two folders hold exactly their files|' "$T/step-t.sh"
+grep -q 'TEST_EXTRA' "$T/step-t.sh" && ok "the test hook is in the step" || bad "the test hook is not in the step"
 TEST_EXTRA=$T/extra.sh; export TEST_EXTRA
 rc=$(step true); [ "$rc" != 0 ] && grep -q 'other files in /etc/uc-pxx-step2' "$T/out" && ok "on, another file in /etc/uc-pxx-step2: the build stops" || bad "on with an extra file: rc $rc ($(cat "$T/out"))"
 unset TEST_EXTRA

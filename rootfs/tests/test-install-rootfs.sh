@@ -44,7 +44,11 @@ bc() { # A_PRIO A_TRIES A_SUCC B_PRIO B_TRIES B_SUCC
 }
 bc 15 7 0 14 0 1
 export TSX_SYSBLOCK=$S TSX_DEVDIR=$D TSX_BOOTCTL=$T/bootctl UC_PXX_SLOT=$T/uc-pxx-slot TSX_MOUNTS=$T/mounts TSX_RUN=$T/run TSX_TMP=$T/tmp TSX_SYSTEM_SECTORS=$SECT TSX_HB_S=1
-run() { busybox sh "$IR" "$@" > "$T/out" 2>&1; echo $? > "$T/rc"; }
+# The dd of uutils (Ubuntu 26.04) truncates a regular file that is its
+# standard output. The made-up partitions are regular files, so the tool gets
+# a dd that adds conv=notrunc (a block device is never truncated).
+mkdir -p "$T/bin"; printf '#!/bin/sh\nexec %s "$@" conv=notrunc\n' "$(command -v dd)" > "$T/bin/dd"; chmod 755 "$T/bin/dd"
+run() { PATH=$T/bin:$PATH busybox sh "$IR" "$@" > "$T/out" 2>&1; echo $? > "$T/rc"; }
 rc() { cat "$T/rc"; }
 sum() { sha256sum "$D/$1" | cut -d' ' -f1; }
 
