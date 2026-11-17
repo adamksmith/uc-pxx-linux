@@ -21,7 +21,7 @@ start() {
 		eend 0
 		return 0
 	fi
-	checkpath -d -m 0755 "$RUN" /run/tsx
+	checkpath -d -m 0755 "$RUN" "${URLF%/*}"
 	cp "$D/screen.html" "$RUN/screen.html" && chmod 644 "$RUN/screen.html"
 	echo "file://$RUN/screen.html" > "$URLF.tmp" && chmod 644 "$URLF.tmp" && mv "$URLF.tmp" "$URLF"
 	if [ ! -e "$RUN/watch.pid" ]; then
