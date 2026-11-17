@@ -175,13 +175,16 @@ tools/mainline-payload/build.sh build --snapshot SNAP --resource RESOURCE --vbme
   (`DEV_APK_KEY_SHA256`, `none` without it). Never publish such a payload.
 - `--require-both-slot` stops the build unless the payload is a both-slot
   build of the commit (below).
-- `--autoupdate-mode manual|auto` (default `manual`) sets the tsx-autoupdate
+- `--autoupdate-mode manual|auto` (default `manual`; the RC-10c release inputs
+  use `auto`, owner 2026-11-17) sets the tsx-autoupdate
   mode of the slot. `manual` writes `MODE=manual` and `AUTO_RESTART=off` into
   `/etc/tsx/autoupdate.conf`: the slot never installs by itself, and an
   install from Home Assistant (or `tsx-autoupdate now`) does not restart the
   unit. Home Assistant then shows "Restart required", and the person picks the
   time of the restart. `UPDATE_MODE` and `UPDATE_AUTO_RESTART` of panel.conf
-  still win. The inputs record it (`AUTOUPDATE_MODE`).
+  still win. `auto` leaves `/etc/tsx/autoupdate.conf` alone: the defaults of
+  tsx-autoupdate (`MODE=auto` in its window, `AUTO_RESTART=on`). The inputs
+  record it (`AUTOUPDATE_MODE`).
 - `--ssh-access keys|setup` sets how root gets in over ssh (below, "SSH
   access"). The default is `keys` with `--authorized-keys`, else `setup`. The
   inputs record it (`SSH_ACCESS`).
@@ -318,7 +321,8 @@ tree, for each profile (`console`, `kiosk`, `kiosk-ha` = the ha profile):
    `bundle.py check`);
 4. step 2's difference (`r23/clone-delta.json`, build id RELEASE-PROFILE), the
    forbidden search (no r2, `uc-pxx-step2` or `uc-pxx-provision` in A), the
-   manifest of the reference A: ref_a.
+   manifest of the reference A: ref_a. (The install screen stays in A; on A it
+   does nothing.)
 
 The console reference B must be the base itself. Then `profiles.json` goes
 into the base, and the base is made as usual (4 KiB blocks), plus
@@ -339,6 +343,32 @@ bundles for step 2's gate; the base is then built again with that step 2, and
 a bundle or an installed list differs. The inputs file (format 8) records
 `PROVISION_BIN_SHA256`, `R23_RELEASE`, `PROVISION_URLS`,
 `CONTENT_EXCLUDE_SHA256` and `CLONE_DELTA_SHA256`.
+
+### The install screen (R23 base, since RC-10c)
+
+While the end-user install runs on slot B, the panel screen shows the install
+and never a login prompt or the kiosk's first-run setup page (owner R28 to
+R31). `rootfs/install-screen/` goes into the R23 base with the provisioning
+set (`/usr/libexec/uc-pxx-install-screen/`, the service
+`uc-pxx-install-screen` in the default runlevel):
+
+- `state` says `installing` while the slot has the step-2 set and the
+  provisioning service and `/var/lib/uc-pxx-step2` has no `never`, no `done`
+  and no `armed` line in `state`. Slot A (the clone) has neither set, so it is
+  never installing, and a later boot of B as the fallback is not either.
+- `tty1` is the program of tty1 in the console inittab (the line runs getty
+  when the file is not there, so other images keep the plain login). While
+  installing it sets a 16x32 font on tty1 (the Terminus 8x16 of tsx-splash,
+  doubled by `bigfont.py` into `/run`; the 12x24 font if that fails), shows
+  `screen.txt` and waits; uc-pxx-provision and step 2 write their own lines on
+  tty1 in that font. Then it runs getty.
+- The service writes `/run/tsx/kiosk-url` (the URL file that kiosk-session
+  reads) with `file:///run/uc-pxx-install-screen/screen.html`, so the kiosk
+  that provisioning starts shows "Installing", not the setup page. A watcher
+  removes its own URL file when the install ends in that boot ("do not ask
+  again") and restarts a running kiosk.
+
+It writes only `/run`. `rootfs/tests/test-install-screen.sh` tests it.
 
 ## The USB set (both-slot builds)
 

@@ -1,0 +1,31 @@
+#!/bin/sh
+# /usr/libexec/uc-pxx-install-screen/tty1: the program of tty1 in the console
+# inittab of an R23 base (the line falls back to getty when this file is not
+# there). While the mainline install runs on this slot (./state), the panel
+# screen shows what happens, in a large font, and no login prompt (owner
+# R28/R29, ENDUSER-PAGE-REQUIREMENTS). uc-pxx-provision and step 2 write
+# their own lines on tty1 over it, in the same font. When the install has
+# ended, it runs the login (getty), as the console profile does.
+# Test hooks: UC_PXX_INSTALL_SCREEN_DIR, UC_PXX_INSTALL_RUN, UC_PXX_TTY,
+# UC_PXX_SETFONT, UC_PXX_GETTY, UC_PXX_POLL.
+set -u
+D=${UC_PXX_INSTALL_SCREEN_DIR:-/usr/libexec/uc-pxx-install-screen}
+RUN=${UC_PXX_INSTALL_RUN:-/run/uc-pxx-install-screen}
+TTY=${UC_PXX_TTY:-/dev/tty1}
+SETFONT=${UC_PXX_SETFONT:-setfont}
+POLL=${UC_PXX_POLL:-5}
+GETTY=${UC_PXX_GETTY:-/sbin/getty 38400 tty1}
+if "$D/state" > /dev/null 2>&1; then
+	mkdir -p "$RUN"
+	# 16x32 (the Terminus 8x16 of tsx-splash, doubled); the 12x24 font if that fails
+	python3 -I -B "$D/bigfont.py" /usr/share/tsx/splash/font-16.psf "$RUN/font-32.psf" 2> /dev/null
+	$SETFONT -C "$TTY" "$RUN/font-32.psf" 2> /dev/null ||
+		$SETFONT -C "$TTY" /usr/share/tsx/splash/font-24.psf 2> /dev/null
+	{
+		printf '\033[H\033[2J\n\n'
+		sed 's/^/   /' "$D/screen.txt"
+	} > "$TTY" 2> /dev/null
+	while "$D/state" > /dev/null 2>&1; do sleep "$POLL"; done
+fi
+# shellcheck disable=SC2086 # GETTY is a command line
+exec $GETTY

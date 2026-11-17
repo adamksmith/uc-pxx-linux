@@ -741,6 +741,26 @@ if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
 	cmp -s "$HERE/step2/conf.d/uc-pxx-step2-clone" $R/etc/conf.d/uc-pxx-step2 ||
 		{ echo "ERROR: an R23 base needs the step-2 clone conf (UC_PXX_STEP2_KIND=clone)"; exit 1; }
 	log "the provisioning set: uc-pxx-provision $PROV_SHA256, the service uc-pxx-provision, /usr/share/uc-pxx-provision"
+	# The install screen (owner R28 to R31, RC-10c): while the install runs on
+	# this slot, tty1 shows it in a large font (no login prompt) and the kiosk
+	# shows an "Installing" page, never the first-run setup page
+	# (rootfs/install-screen/). On slot A (no step-2 set) it does nothing.
+	install -d -m 755 -o 0 -g 0 $R/usr/libexec/uc-pxx-install-screen
+	for f in state tty1; do install -m 755 -o 0 -g 0 "$HERE/install-screen/$f" $R/usr/libexec/uc-pxx-install-screen/$f; done
+	for f in bigfont.py screen.txt screen.html; do install -m 644 -o 0 -g 0 "$HERE/install-screen/$f" $R/usr/libexec/uc-pxx-install-screen/$f; done
+	install -D -m 755 -o 0 -g 0 "$HERE/install-screen/uc-pxx-install-screen.init" $R/etc/init.d/uc-pxx-install-screen
+	ln -sf /etc/init.d/uc-pxx-install-screen $R/etc/runlevels/default/uc-pxx-install-screen
+	[ -x $R/usr/bin/python3 ] && [ -f $R/usr/share/tsx/splash/font-16.psf ] && [ -f $R/usr/share/tsx/splash/font-24.psf ] &&
+		[ -e $R/usr/sbin/setfont ] && grep -q 'uc-pxx-install-screen/tty1' $R/etc/inittab ||
+		{ echo "ERROR: the install screen needs python3, setfont, the fonts of tsx-splash and the tty1 line of the console inittab"; exit 1; }
+	log "the install screen: /usr/libexec/uc-pxx-install-screen, the service uc-pxx-install-screen"
+fi
+iscr=$(cd $R && find . -name 'uc-pxx-install-screen*' | sed 's#^\./##' | sort | tr '\n' ' ')
+if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then
+	[ "$iscr" = "etc/init.d/uc-pxx-install-screen etc/runlevels/default/uc-pxx-install-screen usr/libexec/uc-pxx-install-screen " ] ||
+		{ echo "ERROR: the install screen set in the image is '$iscr'"; exit 1; }
+else
+	[ -z "$iscr" ] || { echo "ERROR: the image has files of the install screen ($iscr) without UC_PXX_PROVISION_BIN"; exit 1; }
 fi
 prov=$(cd $R && find . -name 'uc-pxx-provision*' | sed 's#^\./##' | sort | tr '\n' ' ')
 if [ -n "${UC_PXX_PROVISION_BIN:-}" ]; then

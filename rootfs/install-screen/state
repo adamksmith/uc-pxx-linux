@@ -1,0 +1,23 @@
+#!/bin/sh
+# /usr/libexec/uc-pxx-install-screen/state: is the mainline install still
+# running on this slot? Prints "installing" (exit 0) or "no" (exit 1).
+#
+# Only an R23 base slot (slot B during the end-user install: the step-2 set and
+# the provisioning set are in the image; step 2's difference removes both from
+# slot A) can be installing. It is installing until step 2 has ended for it:
+#   /var/lib/uc-pxx-step2/never   the person chose "do not ask again"
+#   /var/lib/uc-pxx-step2/done    the finish completed
+#   an "armed ID" line in /var/lib/uc-pxx-step2/state: step 2 armed slot A and
+#                                 restarts into it (if this slot boots again
+#                                 later, it is the fallback, not an install)
+# Read only. Test hook: UC_PXX_INSTALL_ROOT (a folder that stands for /).
+set -u
+R=${UC_PXX_INSTALL_ROOT:-}
+S=$R/var/lib/uc-pxx-step2
+if [ -x "$R/usr/libexec/uc-pxx-step2/uc-pxx-step2" ] && [ -e "$R/etc/init.d/uc-pxx-provision" ] &&
+	[ ! -e "$S/never" ] && [ ! -e "$S/done" ] && ! grep -q '^armed ' "$S/state" 2>/dev/null; then
+	echo installing
+	exit 0
+fi
+echo no
+exit 1

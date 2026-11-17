@@ -98,7 +98,7 @@ cmp -s "$T/img-ha/etc/fstab" "$OV/etc/fstab" && ok "fstab comes from the overlay
 eq "$(cat "$T/img-console/etc/tsx/profile")" console "console has the marker /etc/tsx/profile"
 eq "$(cat "$T/img-kiosk/etc/tsx/profile")" kiosk "kiosk has the marker /etc/tsx/profile"
 [ ! -e "$T/img-ha/etc/tsx/profile" ] && ok "ha has no profile marker (a missing marker means ha)" || bad "ha has a profile marker"
-grep -Eq '^tty1::respawn:/sbin/getty ' "$T/img-console/etc/inittab" && ok "console: getty on tty1" || bad "console: no getty on tty1"
+grep -Eq '^tty1::respawn:(/sbin/getty |/bin/sh -c ".*exec /sbin/getty 38400 tty1")' "$T/img-console/etc/inittab" && ok "console: getty on tty1 (through the install screen of an R23 base)" || bad "console: no getty on tty1"
 for p in console kiosk ha; do
 	grep -Eq '^::respawn:.*getty -L 115200 ttyS2' "$T/img-$p/etc/inittab" && ok "$p: getty on the serial port" || bad "$p: no serial getty"
 done

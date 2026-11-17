@@ -1,0 +1,37 @@
+#!/sbin/openrc-run
+# The install screen of an R23 base slot (owner R28 to R31,
+# ENDUSER-PAGE-REQUIREMENTS-2026-11-15). While the mainline install runs on
+# this slot (/usr/libexec/uc-pxx-install-screen/state), the kiosk that
+# provisioning installs and starts shows a plain "Installing" page
+# (/run/tsx/kiosk-url, the URL file that kiosk-session reads) and never the
+# first-run setup page. A watcher in the background removes the URL file when
+# the install has ended in this boot ("do not ask again") and restarts the
+# kiosk, if it runs, so the panel shows the setup page then. The screen of
+# tty1 is the inittab line's (/usr/libexec/uc-pxx-install-screen/tty1).
+# It writes only /run. On any other slot it does nothing.
+description="Mainline install screen (the kiosk shows the install, not the setup page)"
+D=/usr/libexec/uc-pxx-install-screen
+RUN=/run/uc-pxx-install-screen
+URLF=/run/tsx/kiosk-url
+depend() { before kiosk; }
+
+start() {
+	ebegin "Install screen"
+	if ! "$D/state" > /dev/null 2>&1; then
+		eend 0
+		return 0
+	fi
+	checkpath -d -m 0755 "$RUN" /run/tsx
+	cp "$D/screen.html" "$RUN/screen.html" && chmod 644 "$RUN/screen.html"
+	echo "file://$RUN/screen.html" > "$URLF.tmp" && chmod 644 "$URLF.tmp" && mv "$URLF.tmp" "$URLF"
+	if [ ! -e "$RUN/watch.pid" ]; then
+		setsid /bin/sh -c '
+			while "$0/state" > /dev/null 2>&1; do sleep 10; done
+			if [ "$(cat "$1" 2> /dev/null)" = "file://$2/screen.html" ]; then
+				rm -f "$1"
+				rc-service -q kiosk status > /dev/null 2>&1 && rc-service kiosk restart > /dev/null 2>&1
+			fi' "$D" "$URLF" "$RUN" < /dev/null > /dev/null 2>&1 &
+		echo $! > "$RUN/watch.pid"
+	fi
+	eend 0
+}

@@ -1,0 +1,4 @@
+Installing the system on this unit.
+
+Do not unplug the unit. It restarts by itself when the install
+is done. The install page on the computer shows each step.
