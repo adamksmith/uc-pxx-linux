@@ -515,9 +515,16 @@ look in the driver folder (`*/smi`).
 ### Audio
 
 `uc-pxx-audio` replaces `tsx-audio` of the xx70. `uc-pxx-audio init` sets the
-mixer to the state of the stock firmware. `uc-pxx-audio volume N` sets the
-speaker level in percent. The configuration is `/etc/tsx/audio.conf`. The
-file `/etc/asound.conf` maps the default PCM devices ([hardware.md](hardware.md)).
+mixer to the state of the stock firmware, puts the codec level at its fixed
+ceiling (`VOLUME_MAX`), creates the softvol controls "Master" and "Media" and
+restores the saved volume on Master. `uc-pxx-audio volume N` sets Master in
+percent (30 dB span: the same level for the same percent as the codec volume
+of the builds before RC-10c). The Home Assistant number "Volume", the setup
+page and the panel app set the same control. The configuration is
+`/etc/tsx/audio.conf`. The file `/etc/asound.conf` has the shared PCM layout
+([hardware.md](hardware.md)). `uc-pxx-audio init` also removes the temporary
+Sendspin file `/etc/alsa/conf.d/60-tsx-media-temp.conf` of 2026-11-17 (only
+its exact bytes).
 
 ### Watchdog
 

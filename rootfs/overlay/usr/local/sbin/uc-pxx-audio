@@ -1,15 +1,19 @@
 #!/bin/sh
 # uc-pxx-audio: sound card of the UC-P10 (AIC3104 codec). Configuration:
-# /etc/tsx/audio.conf.
+# /etc/tsx/audio.conf. The PCMs and the softvol controls: /etc/asound.conf.
 #
-#   uc-pxx-audio init          set the mixer paths and the levels (boot)
+#   uc-pxx-audio init          set the mixer paths and the levels (boot):
+#                              the codec at its fixed ceiling VOLUME_MAX, the
+#                              softvol controls Master and Media made, Master
+#                              at the saved volume (else SPEAKER_VOLUME %),
+#                              Media at 100 %
 #   uc-pxx-audio status        card, PCM devices and the volume
 #   uc-pxx-audio card          print the ALSA card name (TSX_SOUND_CARD of the board file)
 #   uc-pxx-audio volume [N|+N|-N]
-#                              speaker level in %: 0 is the control value 0,
-#                              1..100 are VOLUME_MIN..VOLUME_MAX. Saved. No
-#                              argument: print it. Control: PCM Playback Volume
-#   uc-pxx-audio fixed         the speaker at VOLUME_SENDSPIN % for the Sendspin
+#                              the volume in % = the Master softvol (0 is
+#                              silence, 1..100 is -29.7..0 dB). Saved. No
+#                              argument: print Master
+#   uc-pxx-audio fixed         Master at VOLUME_SENDSPIN % for the Sendspin
 #                              player (TSX_VOLUME_FIXED_CMD of the board file).
 #                              The saved volume does not change
 #
@@ -20,16 +24,30 @@
 # amplifier enables are on by default. The device tree sets them. This script
 # does not switch them.
 #
+# Before RC-10c the volume set the codec ("PCM Playback Volume" from
+# VOLUME_MIN to VOLUME_MAX). Now the codec stays at VOLUME_MAX and Master
+# (30 dB span, /etc/asound.conf) gives the same level for the same %. So the
+# saved volume keeps its meaning, and the Home Assistant number, the setup
+# page, the panel app and this command all set one control.
+#
+# init also removes the temporary Sendspin fix of 2026-11-17
+# (/etc/alsa/conf.d/60-tsx-media-temp.conf, only with its exact sha256 TEMP_SHA):
+# /etc/asound.conf has the shared layout now.
+#
 # Without the card, init exits 0. The other commands exit 2.
 # TODO: mute, and a separate volume for the handset. Both share the DAC with the
 # speaker (docs/hardware.md "Open items").
 CONF=${TSX_AUDIO_CONF:-/etc/tsx/audio.conf}
 ASOUND=${TSX_ASOUND_DIR:-/proc/asound}
 AMIXER=${AMIXER:-amixer}
+APLAY=${APLAY:-aplay}
+ALSA_CONFD=${UC_PXX_ALSA_CONFD:-/etc/alsa/conf.d}
+TEMP_CONF=60-tsx-media-temp.conf
+TEMP_SHA=9cfe1081412147d0d6a93ae284e95f1c5e457c01bc087356bab8526c910de169
 
 . "${TSX_BOARD_CONF:-/usr/local/lib/tsx/board.sh}"
 CARD=$TSX_SOUND_CARD CARD_WAIT=${UC_PXX_CARD_WAIT:-15}
-SPEAKER_VOLUME=75 MIC_VOLUME=30 VOLUME_MAX=100 VOLUME_MIN=40 VOLUME_SENDSPIN=100
+SPEAKER_VOLUME=58 MIC_VOLUME=30 VOLUME_MAX=100 VOLUME_MIN=40 VOLUME_SENDSPIN=100
 [ -r "$CONF" ] && . "$CONF"
 case $VOLUME_SENDSPIN in ''|*[!0-9]*) VOLUME_SENDSPIN=100;; esac
 [ "$VOLUME_SENDSPIN" -gt 100 ] && VOLUME_SENDSPIN=100
@@ -40,19 +58,34 @@ have_card() { [ -e "$ASOUND/$CARD" ]; }
 need_card() { have_card || { echo "uc-pxx-audio: no sound card $CARD" >&2; exit 2; }; }
 cset() { $AMIXER -q -c "$CARD" cset name="$1" "$2" 2>/dev/null || log "cannot set '$1' to $2"; }
 
-# percent_to_raw N: the control value for N percent
-percent_to_raw() {
-	if [ "$1" -le 0 ]; then echo 0; return; fi
-	echo $(( VOLUME_MIN + ($1 - 1) * (VOLUME_MAX - VOLUME_MIN) / 99 ))
-}
+# set_percent N: Master to N % (both channels)
 set_percent() {
-	_raw=$(percent_to_raw "$1")
-	cset 'PCM Playback Volume' "$_raw,$_raw"
+	$AMIXER -q -c "$CARD" sset Master "$1%" 2>/dev/null || log "cannot set Master to $1%"
+}
+master_percent() {
+	$AMIXER -c "$CARD" sget Master 2>/dev/null | sed -n 's/.*\[\([0-9]\{1,3\}\)%\].*/\1/p' | head -n 1
 }
 get_percent() {
 	_p=$(cat "$VSTATE" 2>/dev/null)
 	case $_p in ''|*[!0-9]*) _p=;; esac
 	echo "$_p"
+}
+# Create the alsa-lib softvol controls without opening the hardware.
+make_softvols() {
+	for _pcm in tsx_master_ctl tsx_media_ctl; do
+		$APLAY -q -D "$_pcm" -t raw -f S16_LE -r 48000 -c 2 /dev/null 2>/dev/null ||
+			log "could not create the softvol of $_pcm"
+	done
+}
+# The one-time cleanup of the temporary Sendspin fix (exact bytes only).
+drop_temp_conf() {
+	_f=$ALSA_CONFD/$TEMP_CONF
+	[ -e "$_f" ] || return 0
+	if [ "$(sha256sum "$_f" 2>/dev/null | cut -d' ' -f1)" = "$TEMP_SHA" ]; then
+		rm -f "$_f" && log "removed the temporary $_f (the shared layout is in /etc/asound.conf)"
+	else
+		log "kept $_f: it is not the known temporary file (remove it by hand if /etc/asound.conf covers it)"
+	fi
 }
 
 wait_card() {
@@ -62,6 +95,7 @@ wait_card() {
 }
 
 init_card() {
+	drop_temp_conf
 	wait_card || { log "no sound card $CARD"; return 0; }
 	cset 'Left DAC Mux' 'DAC_L1'
 	cset 'Right DAC Mux' 'DAC_R1'
@@ -91,13 +125,13 @@ init_card() {
 	# mainline default is off, and the ADC offset (-28 dBFS on the handset
 	# microphone channel) would pass.
 	cset 'ADC HPF Cut-off' '0.0045xFs,0.0045xFs'
+	# The codec at its fixed ceiling; the volume is Master.
+	cset 'PCM Playback Volume' "$VOLUME_MAX,$VOLUME_MAX"
+	make_softvols
+	$AMIXER -q -c "$CARD" sset Media 100% 2>/dev/null || log "cannot set Media to 100%"
 	_p=$(get_percent)
-	if [ -n "$_p" ]; then
-		set_percent "$_p"
-	else
-		cset 'PCM Playback Volume' "$SPEAKER_VOLUME,$SPEAKER_VOLUME"
-	fi
-	log "mixer defaults applied"
+	set_percent "${_p:-$SPEAKER_VOLUME}"
+	log "mixer defaults applied (Master ${_p:-$SPEAKER_VOLUME}%)"
 }
 
 cmd=${1:-}; [ $# -gt 0 ] && shift
@@ -108,11 +142,12 @@ status)
 	need_card
 	echo "card: $CARD"
 	sed 's/^/  /' "$ASOUND/pcm" 2>/dev/null
-	echo "volume: $(get_percent)%"
+	echo "volume (Master): $(master_percent)%, saved: $(get_percent)%"
+	echo "Media: $($AMIXER -c "$CARD" sget Media 2>/dev/null | sed -n 's/.*\[\([0-9]\{1,3\}\)%\].*/\1/p' | head -n 1)%"
 	$AMIXER -c "$CARD" cget name='PCM Playback Volume' 2>/dev/null | sed 's/^/  /';;
 volume)
 	need_card
-	cur=$(get_percent); [ -n "$cur" ] || cur=100
+	cur=$(master_percent); [ -n "$cur" ] || cur=$(get_percent); [ -n "$cur" ] || cur=100
 	case "${1:-}" in
 	'') echo "$cur"; exit 0;;
 	+*|-*)
@@ -130,5 +165,5 @@ volume)
 fixed)
 	need_card
 	set_percent "$VOLUME_SENDSPIN";;
-*) sed -n '2,14p' "$0" >&2; exit 2;;
+*) sed -n '2,19p' "$0" >&2; exit 2;;
 esac

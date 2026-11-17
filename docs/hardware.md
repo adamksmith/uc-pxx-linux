@@ -35,8 +35,13 @@ playback and eight channels for capture.
   handset microphone.
 - The first 0.5 s of a capture holds the power-up transient of the ADC.
 
-`rootfs/overlay/etc/asound.conf` maps the stereo default to the four playback
-channels and shares the capture device with dsnoop.
+`rootfs/overlay/etc/asound.conf` has the PCM layout of the tsx panels (since
+RC-10c): `speaker` and the default playback go through the "Master" softvol
+and a dmix that mixes stereo down to mono on the four playback channels;
+`media` adds the "Media" softvol (Sendspin); `mic` (the two speakerphone
+microphones, mono), `speakerphone_mics` (the default capture), `handset_mic`
+and `all_mics` share the capture device with dsnoop. So the kiosk browser,
+the voice satellite and the Sendspin player can play at the same time.
 
 ## Keys and LEDs
 
