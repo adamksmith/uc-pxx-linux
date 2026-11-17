@@ -33,8 +33,8 @@ with its mode. The tree `root/` has the install paths.
 | `/etc/tsx/uc-pxx-leds.conf` | The settings (`PERSIST`, `READY_SOURCE`, `READY_TIMEOUT_S`, `BOOT_OK_HOLD_S`) |
 | `/usr/local/share/tsx/esphome.d/uc-pxx-leds.py` | The ESPHome plugin |
 
-The package needs `python3`, `openrc` and `uc-pxx-boot-tools` (the program
-`uc-pxx-bootctl`). The old service `uc-pxx-status-led` is gone. The daemon does
+The package needs `python3` and `openrc` (and depends on `uc-pxx-boot-tools`,
+the boot control of the panel). The old service `uc-pxx-status-led` is gone. The daemon does
 its work.
 
 ## States
@@ -125,10 +125,14 @@ says `fallback` then. The daemon polls for READY every 2 seconds.
 
 ### Boot state
 
-The daemon reads the boot state with `uc-pxx-bootctl status`. This command only
-reads the A/B sector. The daemon asks every 10 seconds while the state is not
-`ok`, and every 60 seconds after that. Slot A is successful when the line
-`current: A{... succ 1}` shows it. A failed read or a missing line is `wait`.
+The daemon reads the boot state from the A/B block (AvbABData, eMMC LBA 49156)
+itself: one read-only `O_DIRECT` read of `/dev/mmcblk0`, never a write. Up to
+RC-10b it ran `uc-pxx-bootctl status`, which writes a line to the kernel log at
+each run (one line a minute in dmesg). The block counts only when it passes the
+checks of `uc-pxx-bootctl` (magic, version 1, zero reserved bytes, the
+big-endian CRC32, legal slot states, a bootable slot). The daemon reads every
+10 seconds while the state is not `ok`, and every 60 seconds after that. A
+failed read or a block that fails a check is `wait`.
 
 | Boot state | Meaning |
 |---|---|
@@ -139,7 +143,7 @@ reads the A/B sector. The daemon asks every 10 seconds while the state is not
 The state is `locked` while the marker `/run/uc-pxx-slot-a-changed` exists.
 `uc-pxx-arm-slot` creates the marker before it arms slot A. The running image
 then has not been proven good. The state goes back to `ok` when the marker is
-gone and `uc-pxx-bootctl` says that slot A is successful.
+gone and the A/B block says that slot A is successful.
 
 The control of the status LED depends on the boot state only, for every
 `READY_SOURCE`. Until the state is `ok`, the daemon refuses every `status`
@@ -326,7 +330,7 @@ tsx-linux-common version with that rule.
 | Test | Checks |
 |---|---|
 | `packages/uc-pxx-leds/tests/test-package.sh` | `FILES` and the tree are the same. No other file writes the LEDs |
-| `packages/uc-pxx-leds/tests/test-daemon.sh` | The daemon with fake LEDs and a stub of `uc-pxx-bootctl`: the commands, the boot state, READY (the sources and the timeout), the colors, the triggers, the red latch, persistence and the socket |
+| `packages/uc-pxx-leds/tests/test-daemon.sh` | The daemon with fake LEDs and a made-up A/B block (`tests/mkab.py`): the commands, the boot state, READY (the sources and the timeout), the colors, the triggers, the red latch, persistence and the socket |
 | `packages/uc-pxx-leds/tests/test-cli.sh` | `uc-pxx-led` against the real daemon: commands, exit status, `show` |
 | `packages/uc-pxx-leds/tests/test-plugin.sh` | The plugin against `tsx_panel` of tsx-linux-common with stand-ins and a fake daemon. Needs `TSX_COMMON` |
 | `rootfs/tests/test-esphome-plugin.sh` | The board plugin `uc-pxx.py` (the switches). Needs `TSX_COMMON` |

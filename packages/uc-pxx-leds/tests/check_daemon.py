@@ -60,10 +60,12 @@ def trig(name):
     return get("%s/leds/%s/trigger" % (t, name))
 
 
-def bootctl(succ, rc=0):
-    """What the stub of uc-pxx-bootctl prints. succ is 0, 1 or None (no line)."""
-    put(t + "/bootctl.succ", "" if succ is None else str(succ))
-    put(t + "/bootctl.rc", str(rc))
+def bootctl(succ, how=""):
+    """The made-up A/B block (UC_PXX_AB_DEV = t/ab.bin): slot A successful or
+    not; None = no valid block; how = bad-crc, bad-magic or illegal."""
+    import subprocess
+    subprocess.run([sys.executable, "-I", "-B", os.path.join(os.path.dirname(os.path.abspath(__file__)), "mkab.py"),
+                    t + "/ab.bin", "none" if succ is None else str(succ), how], check=True)
 
 
 def mark(on):
@@ -172,10 +174,20 @@ check("a status command after the hold", (L.handle("status cyan"), led("green"),
 check("status auto: the boot display, off", (L.handle("status auto"), led("green"), led("blue")), ("ok", 0, 0))
 bootctl(None)                       # unknown state: wait
 L.boot_due = 0; at(L, 2000.0)
-check("no 'current' line from bootctl: wait", L.boot, "wait")
-bootctl(1, rc=1)
+check("no valid A/B block (zeros): wait", L.boot, "wait")
+bootctl(1, "bad-crc")
 L.boot_due = 0; at(L, 2001.0)
-check("bootctl fails: wait", L.boot, "wait")
+check("a CRC that does not match (big-endian): wait", L.boot, "wait")
+bootctl(1, "bad-magic")
+L.boot_due = 0; at(L, 2001.5)
+check("a bad magic: wait", L.boot, "wait")
+bootctl(1, "illegal")
+L.boot_due = 0; at(L, 2001.7)
+check("slot A successful with tries (illegal): wait", L.boot, "wait")
+os.rename(t + "/ab.bin", t + "/ab.gone")
+L.boot_due = 0; at(L, 2001.8)
+check("the device cannot be opened: wait", L.boot, "wait")
+os.rename(t + "/ab.gone", t + "/ab.bin")
 bootctl(1)
 L.boot_due = 0; at(L, 2002.0)
 check("and ok again", L.boot, "ok")

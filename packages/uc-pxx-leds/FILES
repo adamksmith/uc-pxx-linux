@@ -3,8 +3,9 @@
 # image, with the mode of the file. tests/test-package.sh checks that this list
 # and the tree are the same.
 #
-# Depends (apk): python3, openrc, uc-pxx-boot-tools (the program
-# /usr/sbin/uc-pxx-bootctl, run with the argument "status" only).
+# Depends (apk): python3, openrc, uc-pxx-boot-tools. The daemon reads the A/B
+# block itself (read only, /dev/mmcblk0 at LBA 49156); since RC-10c it does
+# not run uc-pxx-bootctl (that writes a kernel-log line at each run).
 # Optional: tsx-esphome or tsx-voice from tsx-linux-common (they load the
 # plugin from /usr/local/share/tsx/esphome.d).
 # Conflicts: no other program may write the LED class devices teams_white,

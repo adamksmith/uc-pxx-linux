@@ -34,8 +34,14 @@ does not come within READY_TIMEOUT_S (default 180) after the daemon start,
 the daemon goes by the A/B mark, as bootctl does ("ready fallback" in the
 state file). A kiosk restart later does not bring back the blue blink.
 
-The boot state comes from `uc-pxx-bootctl status`, which only reads the A/B
-sector. The state is "ok" when slot A is marked successful and the marker
+The boot state comes from the A/B block (AvbABData, eMMC LBA 49156), which
+the daemon reads itself: one O_RDONLY | O_DIRECT read of /dev/mmcblk0, never a
+write (before RC-10c it ran `uc-pxx-bootctl status` for this, which writes a
+kernel-log line at every run: one line a minute in dmesg). The block counts
+only when it passes the checks of uc-pxx-bootctl (magic, version 1, zero
+reserved bytes, the big-endian CRC32, legal slot states, a bootable slot);
+otherwise the state is "wait". The state is "ok" when slot A is marked
+successful and the marker
 /run/uc-pxx-slot-a-changed does not exist. The marker means that a script
 changed or armed slot A in this boot. The state is "locked" then, and the
 status LED shows the slow blue blink again, also when READY. The commands for
@@ -78,7 +84,9 @@ good (default 10). 0 keeps the green on.
 
 Environment overrides for tests: UC_PXX_LEDS (the LED class folder),
 UC_PXX_LEDS_SOCK, UC_PXX_LEDS_STATE, UC_PXX_LEDS_CONF, UC_PXX_LEDS_SAVE,
-UC_PXX_BOOTCTL, UC_PXX_SLOT_MARK, UC_PXX_LEDS_GROUPS, UC_PXX_BOOT_POLL
+UC_PXX_AB_DEV (the device or a test file, default /dev/mmcblk0),
+UC_PXX_AB_OFFSET (bytes, default 49156 * 512), UC_PXX_SLOT_MARK,
+UC_PXX_LEDS_GROUPS, UC_PXX_BOOT_POLL
 (seconds, default 10), UC_PXX_BOOT_POLL_OK (default 60), UC_PXX_LEDS_LOOPS,
 UC_PXX_KIOSK_READY, UC_PXX_RUNLEVELS, UC_PXX_RC_STATUS, UC_PXX_OPENRC_STARTED,
 UC_PXX_READY_POLL (seconds, default 2) and UC_PXX_READY_SOURCE (the default
@@ -86,14 +94,18 @@ of READY_SOURCE when the config file has no such key).
 """
 
 import grp
+import mmap
 import os
 import re
 import select
 import signal
 import socket
+import stat
+import struct
 import subprocess
 import sys
 import time
+import zlib
 
 LEDS = os.environ.get("UC_PXX_LEDS", "/sys/class/leds")
 RUN = os.environ.get("TSX_RUN_DIR", "/run/tsx")
@@ -101,7 +113,8 @@ SOCK = os.environ.get("UC_PXX_LEDS_SOCK", os.path.join(RUN, "uc-pxx-leds.sock"))
 STATE = os.environ.get("UC_PXX_LEDS_STATE", os.path.join(RUN, "uc-pxx-leds.state"))
 CONF = os.environ.get("UC_PXX_LEDS_CONF", "/etc/tsx/uc-pxx-leds.conf")
 SAVE = os.environ.get("UC_PXX_LEDS_SAVE", "/data/uc-pxx-leds.saved")
-BOOTCTL = os.environ.get("UC_PXX_BOOTCTL", "/usr/sbin/uc-pxx-bootctl")
+AB_DEV = os.environ.get("UC_PXX_AB_DEV", "/dev/mmcblk0")
+AB_OFFSET = int(os.environ.get("UC_PXX_AB_OFFSET", str(49156 * 512)))
 SLOT_MARK = os.environ.get("UC_PXX_SLOT_MARK", "/run/uc-pxx-slot-a-changed")
 GROUPS = os.environ.get("UC_PXX_LEDS_GROUPS", "kiosk tsx-panel-app").split()
 POLL_WAIT = float(os.environ.get("UC_PXX_BOOT_POLL", "10"))
@@ -129,6 +142,51 @@ READY_TIMEOUT_DEFAULT = 180
 HEARTBEAT = ((0.07, 1), (0.13, 0), (0.07, 1), (0.73, 0))
 MAX_LINE = 64
 KEEP = ("keep", None)       # the red channel while the boot is not good: write nothing
+
+
+def read_ab():
+    """The 32 bytes of the A/B block, or None. Read only: O_RDONLY (with
+    O_DIRECT on a block device, as uc-pxx-bootctl reads it, so the page cache
+    never hides a write of another program). No kernel-log line."""
+    try:
+        direct = stat.S_ISBLK(os.stat(AB_DEV).st_mode)
+        fd = os.open(AB_DEV, os.O_RDONLY | os.O_CLOEXEC | (os.O_DIRECT if direct else 0))
+    except OSError:
+        return None
+    try:
+        if direct:
+            with mmap.mmap(-1, 4096) as buf:       # page-aligned, as O_DIRECT needs
+                n = os.preadv(fd, [buf], AB_OFFSET)
+                return bytes(buf[:32]) if n >= 32 else None
+        data = os.pread(fd, 32, AB_OFFSET)
+        return data if len(data) == 32 else None
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def _slot_legal(s):
+    if s[0] > 15 or s[1] > 7 or s[3] != 0:
+        return False
+    return s[1] == 0 if s[2] == 1 else s[2] == 0
+
+
+def _slot_bootable(s):
+    return s[0] > 0 and (s[2] == 1 or s[1] > 0)
+
+
+def ab_slot_a(b):
+    """(priority, tries, successful) of slot A when the block passes the checks
+    of uc-pxx-bootctl (validate()), else None."""
+    if b is None or len(b) < 32 or b[0:4] != b"\x00AB0" or b[4] != 1 or b[6] or b[7] or any(b[16:28]):
+        return None
+    if struct.unpack(">I", b[28:32])[0] != zlib.crc32(b[:28]) & 0xffffffff:
+        return None
+    a, bb = b[8:12], b[12:16]
+    if not (_slot_legal(a) and _slot_legal(bb)) or not (_slot_bootable(a) or _slot_bootable(bb)):
+        return None
+    return (a[0], a[1], a[2])
 
 
 class Bad(Exception):
@@ -331,13 +389,8 @@ class Leds:
     def read_boot(self):
         if os.path.exists(SLOT_MARK):
             return "locked"
-        try:
-            res = subprocess.run([BOOTCTL, "status"], check=False, timeout=5, stdin=subprocess.DEVNULL,
-                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        except (OSError, subprocess.SubprocessError):
-            return "wait"
-        m = re.search(r"current: A\{prio \d+ tries \d+ succ ([01])\}", res.stdout.decode("ascii", "replace"))
-        return "ok" if res.returncode == 0 and m and m.group(1) == "1" else "wait"
+        slot_a = ab_slot_a(read_ab())
+        return "ok" if slot_a is not None and slot_a[2] == 1 else "wait"
 
     def update_boot(self, now):
         if os.path.exists(SLOT_MARK):

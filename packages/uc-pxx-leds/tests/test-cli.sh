@@ -1,6 +1,6 @@
 #!/bin/sh
 # Host test for the command uc-pxx-led. It runs the real daemon against a
-# made-up /sys/class/leds and a stub for uc-pxx-bootctl, and checks the
+# made-up /sys/class/leds and a made-up A/B block (tests/mkab.py), and checks the
 # arguments, the exit status and the output of the command.
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
@@ -22,9 +22,8 @@ mkdir -p "$T/leds" "$T/run"
 for l in teams_white mute_headset mute_speaker mute_red red green blue; do
 	mkdir -p "$T/leds/$l"; echo 0 > "$T/leds/$l/brightness"; echo "[none] timer heartbeat" > "$T/leds/$l/trigger"
 done
-printf '#!/bin/sh\necho "uc-pxx-bootctl: current: A{prio 15 tries 7 succ $(cat "$(dirname "$0")/succ")} B{prio 14 tries 7 succ 1} crc 0" >&2\n' > "$T/bootctl"
-chmod +x "$T/bootctl"; echo 0 > "$T/succ"
-ENVV="UC_PXX_LEDS=$T/leds UC_PXX_LEDS_SOCK=$T/run/sock UC_PXX_LEDS_STATE=$T/state UC_PXX_LEDS_CONF=$T/none UC_PXX_LEDS_SAVE=$T/saved UC_PXX_BOOTCTL=$T/bootctl UC_PXX_SLOT_MARK=$T/mark TSX_RUN_DIR=$T/run UC_PXX_LEDS_GROUPS=nosuchgroup UC_PXX_READY_SOURCE=bootctl UC_PXX_BOOT_POLL=0.3"
+python3 -I -B "$HERE/tests/mkab.py" "$T/ab.bin" 0
+ENVV="UC_PXX_LEDS=$T/leds UC_PXX_LEDS_SOCK=$T/run/sock UC_PXX_LEDS_STATE=$T/state UC_PXX_LEDS_CONF=$T/none UC_PXX_LEDS_SAVE=$T/saved UC_PXX_AB_DEV=$T/ab.bin UC_PXX_AB_OFFSET=0 UC_PXX_SLOT_MARK=$T/mark TSX_RUN_DIR=$T/run UC_PXX_LEDS_GROUPS=nosuchgroup UC_PXX_READY_SOURCE=bootctl UC_PXX_BOOT_POLL=0.3"
 led() { cat "$T/leds/$1/brightness"; }
 cli() { env -i PATH="$PATH" $ENVV python3 -I -B "$CLI" "$@"; }
 
@@ -57,7 +56,7 @@ cli status green 2> "$T/err"; eq "$?" "1" "status is refused while the boot is n
 grep -q "boot-wait" "$T/err" && ok "with the reason" || bad "no reason: $(cat "$T/err")"
 cli status auto; eq "$?" "0" "status auto is always accepted"
 eq "$(cat "$T/leds/blue/trigger"):$(cat "$T/leds/blue/delay_on"):$(cat "$T/leds/blue/delay_off")" "timer:500:1500" "slow blue blink during the boot"
-echo 1 > "$T/succ"; sleep 1.2
+python3 -I -B "$HERE/tests/mkab.py" "$T/ab.bin" 1; sleep 1.2
 eq "$(led green):$(led blue)" "1:0" "green after the boot is good"
 cli status magenta; eq "$?:$(led red)$(led green)$(led blue)" "0:101" "status magenta"
 cli status cyan blink fast; eq "$?:$(cat "$T/leds/blue/trigger"):$(cat "$T/leds/green/delay_on")" "0:timer:125" "status cyan blink fast"

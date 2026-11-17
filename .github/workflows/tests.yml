@@ -89,7 +89,7 @@ jobs:
         run: sh rootfs/tests/test-watchdog.sh
       - name: packages/uc-pxx-leds/tests/test-package.sh - the file list of the LED package and the rule of one writer
         run: sh packages/uc-pxx-leds/tests/test-package.sh
-      - name: packages/uc-pxx-leds/tests/test-daemon.sh - the LED daemon with fake LEDs, a stub boot-control tool and a socket
+      - name: packages/uc-pxx-leds/tests/test-daemon.sh - the LED daemon with fake LEDs, a made-up A/B block and a socket
         run: sh packages/uc-pxx-leds/tests/test-daemon.sh
       - name: packages/uc-pxx-leds/tests/test-cli.sh - the command uc-pxx-led against the daemon
         run: sh packages/uc-pxx-leds/tests/test-cli.sh

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Host test for the daemon uc-pxx-leds. It uses a made-up /sys/class/leds, a
-# stub for uc-pxx-bootctl and real sockets. It checks:
+# made-up A/B block (tests/mkab.py) and real sockets. It checks:
 #   - the parser: only the fixed command forms run, every other line is refused
 #   - the start state: indicators off, a slow blue blink until the system is
 #     ready, then green for BOOT_OK_HOLD_S, then off; commands for the status
@@ -34,21 +34,12 @@ grep -qx 'PERSIST=no' "$CONF" && ok "the shipped config has PERSIST=no" || bad "
 grep -qx 'READY_SOURCE=auto' "$CONF" && ok "the shipped config has READY_SOURCE=auto" || bad "the shipped config does not have READY_SOURCE=auto"
 grep -qx 'READY_TIMEOUT_S=180' "$CONF" && ok "the shipped config has READY_TIMEOUT_S=180" || bad "the shipped config does not have READY_TIMEOUT_S=180"
 grep -qx 'BOOT_OK_HOLD_S=10' "$CONF" && ok "the shipped config has BOOT_OK_HOLD_S=10" || bad "the shipped config does not have BOOT_OK_HOLD_S=10"
-grep -q 'uc-pxx-bootctl' "$PROG" && ok "the daemon names uc-pxx-bootctl" || bad "no bootctl"
-grep -Eq 'bootctl.*(mark-successful|arm|--file)|"(mark-successful|arm-trying)"' "$PROG" && bad "the daemon may call a bootctl command that writes" || ok "the daemon calls only 'bootctl status'"
-grep -c 'BOOTCTL, "status"' "$PROG" | grep -qx 1 && ok "bootctl runs in one place, with the argument status" || bad "bootctl is called in more than one place"
+grep -Eq 'BOOTCTL|/usr/sbin/uc-pxx-bootctl' "$PROG" && bad "the daemon still runs uc-pxx-bootctl (a kernel-log line each run)" || ok "the daemon does not run uc-pxx-bootctl"
+grep -n 'AB_DEV' "$PROG" | grep -Eq 'O_WRONLY|O_RDWR|O_CREAT|"w|"a' && bad "the daemon may open the A/B device for writing" || ok "no write flag on any line of the A/B device"
+grep -c 'os.open(AB_DEV' "$PROG" | grep -qx 1 && grep -q 'os.O_RDONLY | os.O_CLOEXEC' "$PROG" && ok "the A/B device is opened in one place, O_RDONLY" || bad "the A/B open is not one O_RDONLY open"
+python3 -I -B "$HERE/tests/mkab.py" "$T/ab.bin" 1
 
-# a stub of uc-pxx-bootctl: the state comes from two files
-cat > "$T/bootctl" <<'S'
-#!/bin/sh
-D=$(dirname "$0")
-[ "$*" = "status" ] || { echo "stub: bad arguments: $*" >&2; exit 9; }
-s=$(cat "$D/bootctl.succ" 2>/dev/null)
-[ -z "$s" ] || echo "uc-pxx-bootctl: current: A{prio 15 tries 7 succ $s} B{prio 14 tries 7 succ 1} crc 00000000" >&2
-exit "$(cat "$D/bootctl.rc" 2>/dev/null || echo 0)"
-S
-chmod +x "$T/bootctl"
-ENVV="UC_PXX_LEDS=$T/leds UC_PXX_LEDS_SOCK=$T/run/sock UC_PXX_LEDS_STATE=$T/state UC_PXX_LEDS_CONF=$T/conf UC_PXX_LEDS_SAVE=$T/saved UC_PXX_BOOTCTL=$T/bootctl UC_PXX_SLOT_MARK=$T/mark TSX_RUN_DIR=$T/run UC_PXX_LEDS_GROUPS=nosuchgroup UC_PXX_READY_SOURCE=bootctl"
+ENVV="UC_PXX_LEDS=$T/leds UC_PXX_LEDS_SOCK=$T/run/sock UC_PXX_LEDS_STATE=$T/state UC_PXX_LEDS_CONF=$T/conf UC_PXX_LEDS_SAVE=$T/saved UC_PXX_AB_DEV=$T/ab.bin UC_PXX_AB_OFFSET=0 UC_PXX_SLOT_MARK=$T/mark TSX_RUN_DIR=$T/run UC_PXX_LEDS_GROUPS=nosuchgroup UC_PXX_READY_SOURCE=bootctl"
 
 echo "== the module, with made-up LEDs =="
 env -i PATH="$PATH" PYTHONDONTWRITEBYTECODE=1 $ENVV python3 -I -B "$HERE/tests/check_daemon.py" "$PROG" "$T"
@@ -60,7 +51,7 @@ mkdir -p "$T/leds" "$T/run"
 for l in teams_white mute_headset mute_speaker mute_red red green blue; do
 	mkdir -p "$T/leds/$l"; echo 0 > "$T/leds/$l/brightness"; echo "[none] timer heartbeat" > "$T/leds/$l/trigger"
 done
-echo 1 > "$T/bootctl.succ"; rm -f "$T/conf" "$T/mark"
+python3 -I -B "$HERE/tests/mkab.py" "$T/ab.bin" 1; rm -f "$T/conf" "$T/mark"
 send() { python3 -I -B - "$T/run/sock" "$1" <<'PY'
 import socket, sys
 s = socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect(sys.argv[1])
