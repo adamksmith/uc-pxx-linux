@@ -33,6 +33,9 @@
 #   TSX_BT_CHIP            the chip file of tsx-bt, or "none" (the chip needs
 #                          no help from user space)
 #   TSX_BT_PROXY_DEFAULT   on | off: BT_PROXY when panel.conf leaves it empty
+#   TSX_BT_ACTIVE_DEFAULT  on | off: BT_ACTIVE when panel.conf does not set it
+#                          (tsx-config of tsx-linux-common 0.3.13_pre20261118 or
+#                          newer; an older tsx-config keeps BT_ACTIVE off)
 #   TSX_BT_MAC_SETTABLE    yes | no: BT_MAC can set the Bluetooth address
 #   TSX_MAC_SOURCE         name of the source of the eth0 MAC (cfg)
 #   TSX_SERIAL_CONSOLE     the serial console device name (ttyS2). The
@@ -113,9 +116,12 @@ TSX_CONFIG_RELOAD=${TSX_CONFIG_RELOAD:-uc-pxx-als uc-pxx-presence}
 # The address comes from the controller, so BT_MAC cannot apply.
 TSX_BT_MAC_SETTABLE=${TSX_BT_MAC_SETTABLE:-no}
 # The passive Bluetooth proxy is on by default (tested on unit 4, 2026-11-17:
-# 923 adverts of 30 devices in 15 s through tsx-esphome). BT_ACTIVE (GATT
-# connections) stays off: the active central fails on this controller.
+# 923 adverts of 30 devices in 15 s through tsx-esphome). The active
+# connections (BT_ACTIVE, GATT) are on by default too (owner 2026-11-17): the
+# active central works on this controller with the discovery reset of tsx-ha
+# 0.3.13_pre20261117 (tested on unit 4, 2026-11-17).
 TSX_BT_PROXY_DEFAULT=${TSX_BT_PROXY_DEFAULT:-on}
+TSX_BT_ACTIVE_DEFAULT=${TSX_BT_ACTIVE_DEFAULT:-on}
 TSX_MAC_SOURCE=${TSX_MAC_SOURCE:-cfg}
 TSX_SERIAL_CONSOLE=${TSX_SERIAL_CONSOLE:-ttyS2}
 # TODO: Chromium with panfrost is not tested. Fill in the flags that it needs.
